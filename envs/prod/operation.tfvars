@@ -1,0 +1,8 @@
+# 단계: operation
+enable_rosa            = true
+enable_vpn             = true
+enable_rds             = true
+rds_mode               = "operation"
+enable_nat             = true
+enable_dr_nlb          = true
+enable_route53_routing = true
