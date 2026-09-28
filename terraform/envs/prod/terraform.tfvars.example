@@ -1,0 +1,4 @@
+aws_region           = "ap-northeast-2"
+cluster_name         = "neuroplan-rosa"
+account_role_prefix  = "neuroplan"
+operator_role_prefix = "neuroplan"
