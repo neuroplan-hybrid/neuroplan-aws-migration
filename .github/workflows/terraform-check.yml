@@ -7,6 +7,7 @@ on:
       - "**/*.tf"
       - "**/*.tfvars"
       - "**/*.tfvars.json"
+      - "**/.terraform.lock.hcl"
       - ".github/workflows/terraform-check.yml"
   push:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - "**/*.tf"
       - "**/*.tfvars"
       - "**/*.tfvars.json"
+      - "**/.terraform.lock.hcl"
       - ".github/workflows/terraform-check.yml"
 
 permissions:
@@ -21,6 +23,7 @@ permissions:
 
 env:
   TF_IN_AUTOMATION: "true"
+  TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
 
 jobs:
   terraform-validate:
@@ -35,6 +38,17 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
+
+      - name: Prepare Terraform plugin cache
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/terraform-plugin-cache
+          key: terraform-${{ runner.os }}-1.10.5-${{ hashFiles('**/.terraform.lock.hcl', '**/versions.tf') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-1.10.5-
 
       - name: Check formatting
         run: terraform fmt -check -recursive -diff
