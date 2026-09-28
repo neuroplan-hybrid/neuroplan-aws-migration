@@ -42,10 +42,26 @@ NeuroPlan 2차: 온프렘 Kubernetes → AWS/ROSA 단계적 하이브리드 마�
 - 브랜치: `feature/<module>-xxx`, **`main` 직접 Push 금지** → PR
 - PR 전: `terraform fmt -recursive`, `terraform validate`
 - 남의 Module은 직접 고치지 않고 요청 또는 PR
-- **올림**: `*.tf`, 단계별 tfvars, `.terraform.lock.hcl`(실행 Root마다), Ansible Role, README
+- **올림**: `*.tf`, 단계별 tfvars, `.terraform.lock.hcl`(실행 Root마다, 아래 참고), Ansible Role, README
 - **안 올림**: `*.tfstate*`, `.terraform/`, `*.auto.tfvars`, `secrets*.tfvars`, `*.tfplan`, `*.pem`, 토큰·키·PSK·비밀번호
 
+## Lock 파일 (`.terraform.lock.hcl`)
+
+- 대상 Root: `bootstrap/remote-state`, `bootstrap/dns`, `envs/prod`
+- 현재는 provider 버전 미확정 scaffold 단계라 **아직 커밋하지 않음**
+- provider 버전을 `versions.tf`에 고정한 뒤, 해당 Root 첫 구현 PR에서 생성해 함께 커밋
+- 팀원 OS가 달라도 해시가 맞도록 여러 플랫폼으로 생성
+
+```bash
+# 로컬, 각 Root 디렉터리에서
+terraform init -backend=false
+terraform providers lock -platform=windows_amd64 -platform=linux_amd64 -platform=darwin_arm64
+```
+
 ## Apply
+
+> ⚠️ 현재는 **초기 구조(scaffold) 단계**라 `envs/prod/main.tf`에 Module 호출이 없습니다.
+> 아래 절차는 **각 Module 구현 및 `envs/prod` 공통 조립 완료 후** 실행합니다.
 
 ```
 PR → 리뷰 → Merge → envs/prod plan → 팀 승인 → 지정 1명 apply
