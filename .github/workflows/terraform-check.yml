@@ -23,7 +23,7 @@ permissions:
 
 env:
   TF_IN_AUTOMATION: "true"
-  TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/terraform-plugin-cache
+  TF_PLUGIN_CACHE_DIR: /tmp/terraform-plugin-cache
 
 jobs:
   terraform-validate:
@@ -45,7 +45,7 @@ jobs:
       - name: Cache Terraform providers
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/terraform-plugin-cache
+          path: /tmp/terraform-plugin-cache
           key: terraform-${{ runner.os }}-1.10.5-${{ hashFiles('**/.terraform.lock.hcl', '**/versions.tf') }}
           restore-keys: |
             terraform-${{ runner.os }}-1.10.5-
