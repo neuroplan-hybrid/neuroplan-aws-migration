@@ -1,7 +1,30 @@
 # RDS MariaDB module
 #
-# 네트워크 리소스(VPC, Subnet, VPN, Route Table, Security Group)는 만들거나 수정하지 않는다.
-# envs/prod가 network 모듈의 Output을 이 모듈의 입력값으로 전달한다.
+# Network 모듈은 VPC, Subnet, VPN, Route Table, Security Group만 제공한다.
+# RDS 전용 DB Subnet Group은 RDS·Parameter Group과 같은 수명주기로 이 모듈에서 관리한다.
+
+resource "aws_db_subnet_group" "mariadb" {
+  count = var.enabled ? 1 : 0
+
+  name_prefix = coalesce(var.db_subnet_group_name_prefix, "${var.identifier}-subnets-")
+  description = "${var.project_name} ${var.rds_mode} MariaDB DB subnet group"
+  subnet_ids  = var.db_subnet_ids
+
+  tags = merge(
+    {
+      Name        = coalesce(var.db_subnet_group_name_prefix, "${var.identifier}-subnets-")
+      Project     = var.project_name
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+      RdsMode     = var.rds_mode
+    },
+    var.tags,
+  )
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
 
 # 기본 DB Parameter Group은 수정할 수 없으므로, 복제·컷오버에 필요한
 # binlog/문자셋/시간대 값을 적용할 수 있는 전용 그룹을 생성한다.
@@ -59,8 +82,8 @@ resource "aws_db_instance" "mariadb" {
   username                    = var.master_username
   manage_master_user_password = true
 
-  # network 모듈에서 생성한 기존 리소스만 참조한다.
-  db_subnet_group_name   = var.db_subnet_group_name
+  # Network 모듈이 제공한 DB Subnet을 이 모듈의 Subnet Group으로 묶어 사용한다.
+  db_subnet_group_name   = aws_db_subnet_group.mariadb[0].name
   vpc_security_group_ids = var.rds_security_group_ids
   parameter_group_name   = aws_db_parameter_group.mariadb[0].name
   publicly_accessible    = false
