@@ -3,12 +3,13 @@ terraform {
 
   required_providers {
     aws = {
-      source = "hashicorp/aws"
-      # version = "" # 팀에서 확정 후 고정
+      source  = "hashicorp/aws"
+      version = ">= 6.44.0"
     }
+
     rhcs = {
-      source = "terraform-redhat/rhcs"
-      # version = "" # 팀에서 확정 후 고정
+      source  = "terraform-redhat/rhcs"
+      version = "~> 1.7.9"
     }
   }
 }

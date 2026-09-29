@@ -39,3 +39,38 @@ variable "enable_route53_routing" {
   type    = bool
   default = false
 }
+
+# ROSA HCP
+variable "aws_region" {
+  description = "AWS region for NeuroPlan"
+  type        = string
+  default     = "ap-northeast-2"
+}
+
+variable "cluster_name" {
+  description = "ROSA HCP cluster name"
+  type        = string
+  default     = "neuroplan-rosa"
+}
+
+variable "account_role_prefix" {
+  description = "Prefix for ROSA account IAM roles"
+  type        = string
+  default     = "neuroplan"
+}
+
+variable "operator_role_prefix" {
+  description = "Prefix for ROSA operator IAM roles"
+  type        = string
+  default     = "neuroplan"
+}
+
+variable "aws_subnet_ids" {
+  description = "Subnet IDs provided by the network module/team for ROSA HCP"
+  type        = list(string)
+}
+
+variable "openshift_version" {
+  description = "OpenShift version for ROSA HCP"
+  type        = string
+}
