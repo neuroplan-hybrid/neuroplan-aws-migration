@@ -1,0 +1,9 @@
+---
+# =========================================================
+# Jenkins API
+# =========================================================
+
+jenkins_api_url: "http://127.0.0.1:8080"
+
+jenkins_admin_user: "{{ vault_jenkins_admin_user }}"
+jenkins_api_token: "{{ vault_jenkins_api_token }}"
