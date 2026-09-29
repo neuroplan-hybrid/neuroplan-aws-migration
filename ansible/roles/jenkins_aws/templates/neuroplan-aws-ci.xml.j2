@@ -27,7 +27,7 @@
 
       <userRemoteConfigs>
         <hudson.plugins.git.UserRemoteConfig>
-          <url>https://github.com/{{ application_github_owner }}/{{ application_github_repository }}.git</url>
+          <url>git@github.com:{{ application_github_owner }}/{{ application_github_repository }}.git</url>
           <credentialsId>{{ jenkins_app_repo_credential_id }}</credentialsId>
         </hudson.plugins.git.UserRemoteConfig>
       </userRemoteConfigs>
