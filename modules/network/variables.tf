@@ -55,7 +55,7 @@ variable "db_subnets" {
   }
 
   validation {
-    condition     = length(var.db_subnets) >= 2
+    condition     = length(distinct([for s in values(var.db_subnets) : s.az])) >= 2
     error_message = "RDS DB Subnet Group은 서로 다른 AZ의 서브넷이 2개 이상 필요합니다."
   }
 }
@@ -83,8 +83,14 @@ variable "db_port" {
   default     = 3306
 }
 
+variable "rds_allow_from_rosa" {
+  description = "Private ROSA 서브넷 CIDR → RDS 3306 허용 (ROSA Backend → RDS)"
+  type        = bool
+  default     = true
+}
+
 variable "rds_ingress_cidrs" {
-  description = "RDS로 들어오는 접속 허용 대역 (PoC: DevOps VM → RDS, 덤프·복제 설정)"
+  description = "ROSA 외 추가 허용 대역 (PoC: DevOps VM → RDS, 덤프·복제 설정)"
   type        = list(string)
   default     = ["192.168.44.21/32"]
 }

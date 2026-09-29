@@ -93,6 +93,8 @@ resource "aws_route_table_association" "rosa" {
 }
 
 # NAT Gateway 1개 (비용 절감 설계). enable_nat=false면 생성하지 않음
+# 한계: 단일 NAT는 SPOF이고 2b/2c 워커의 egress가 AZ를 넘어감 (cross-AZ 데이터 요금).
+#       운영 전환 시 AZ별 NAT(3개)로 바꾸면 해소되지만 비용 3배 → 이번 프로젝트는 단일 NAT 유지
 
 resource "aws_eip" "nat" {
   count  = var.enable_nat ? 1 : 0
@@ -156,11 +158,21 @@ resource "aws_route_table_association" "db" {
 }
 
 # ---------- RDS Security Group ----------
+# 역할 경계: RDS SG와 규칙은 network 모듈(희재)이 관리, data 모듈(정현)은 rds_security_group_id를 RDS에 연결만 함
+# 규칙 추가·변경은 network 모듈 PR로 요청 (2차 시나리오 9.2 "SG 규칙 변경: 요청 → 희재 반영")
 # Terraform은 SG 생성 시 AWS 기본 Egress(all)를 자동 제거한다 → 아래 규칙만 남음
+
+locals {
+  # key는 규칙 식별용 (for_each 키가 CIDR 값에 따라 바뀌지 않도록 이름으로 고정)
+  rds_ingress = merge(
+    { for k, s in var.rosa_subnets : "rosa-${k}" => s.cidr if var.rds_allow_from_rosa },
+    { for c in var.rds_ingress_cidrs : "extra-${c}" => c }
+  )
+}
 
 resource "aws_security_group" "rds" {
   name        = "${var.project_name}-rds-sg"
-  description = "RDS MariaDB - on-prem replication and admin access only"
+  description = "RDS MariaDB - ROSA app, on-prem replication, admin access"
   vpc_id      = aws_vpc.main.id
 
   tags = merge(var.tags, {
@@ -169,10 +181,10 @@ resource "aws_security_group" "rds" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "rds" {
-  for_each = toset(var.rds_ingress_cidrs)
+  for_each = local.rds_ingress
 
   security_group_id = aws_security_group.rds.id
-  description       = "MariaDB from ${each.value}"
+  description       = "MariaDB from ${each.key} (${each.value})"
   ip_protocol       = "tcp"
   from_port         = var.db_port
   to_port           = var.db_port
