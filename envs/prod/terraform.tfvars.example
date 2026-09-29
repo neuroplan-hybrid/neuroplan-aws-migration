@@ -1,0 +1,13 @@
+aws_region           = "ap-northeast-2"
+cluster_name         = "neuroplan-rosa"
+openshift_version    = "4.21.33"
+
+# Replace these values with the subnet IDs provided by the network team.
+aws_subnet_ids = [
+  "subnet-xxxxxxxxxxxxxxxxx",
+  "subnet-yyyyyyyyyyyyyyyyy",
+  "subnet-zzzzzzzzzzzzzzzzz"
+]
+
+account_role_prefix  = "neuroplan"
+operator_role_prefix = "neuroplan"
