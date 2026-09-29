@@ -31,4 +31,4 @@ rds_skip_final_snapshot       = false
 rds_final_snapshot_identifier = "neuroplan-rds-operation-final-20261020"
 
 rds_auto_minor_version_upgrade = false
-rds_apply_immediately          = false
+rds_apply_immediately          = true
