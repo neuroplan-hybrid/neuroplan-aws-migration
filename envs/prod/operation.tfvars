@@ -1,5 +1,6 @@
 # 단계: operation
 enable_rosa            = true
+enable_ecr             = true
 enable_vpn             = true
 enable_rds             = true
 rds_mode               = "operation"
