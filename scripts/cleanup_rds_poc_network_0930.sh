@@ -10,7 +10,6 @@ APPLY=0; [ "${1:-}" = "--apply" ] && APPLY=1
 TAGF="Name=tag:Project,Values=NeuroPlan Name=tag:Purpose,Values=rds-gtid-poc"
 SUBNET_GROUP=neuroplan-rds-poc-subnet-group
 LOG_GROUP=/neuroplan/vpn
-ONPREM_CIDR=192.168.44.0/24
 
 run() { echo "+ $*"; if [ "$APPLY" = 1 ]; then "$@"; fi; }
 q()   { aws "$@" --output text; }
@@ -31,17 +30,25 @@ if need VPC "$VPC"; then
   [ -z "$ENI" ] || { echo "✋ ENI가 남아 있음: $ENI → 확인 후 다시 실행"; exit 1; }
 fi
 
-# 1) VPN (유료) → Static Route, Connection 삭제
+# 1) VPN (유료) → Static Route(등록된 것 전부 조회), Connection 삭제
 if need VPN "$VPN"; then
-  run aws ec2 delete-vpn-connection-route --vpn-connection-id "$VPN" --destination-cidr-block "$ONPREM_CIDR"
+  for c in $(q ec2 describe-vpn-connections --vpn-connection-ids "$VPN" --query 'VpnConnections[0].Routes[].DestinationCidrBlock'); do
+    run aws ec2 delete-vpn-connection-route --vpn-connection-id "$VPN" --destination-cidr-block "$c"; done
   run aws ec2 delete-vpn-connection --vpn-connection-id "$VPN"
   [ "$APPLY" = 1 ] && aws ec2 wait vpn-connection-deleted --vpn-connection-ids "$VPN" && echo "VPN 삭제 완료 (과금 종료)"
 fi
 
-# 2) RT 경로 → VGW detach·삭제 → CGW 삭제
-RTB=""; if [ -n "$VPC" ] && [ "$VPC" != None ]; then
+# 2) VPC 모든 RT에서 VGW로 향하는 경로 삭제(대역 하드코딩 없음) → VGW detach·삭제 → CGW 삭제
+ALL_RTB=""; RTB=""
+if [ -n "$VPC" ] && [ "$VPC" != None ]; then
+  ALL_RTB=$(q ec2 describe-route-tables --filters Name=vpc-id,Values=$VPC --query 'RouteTables[].RouteTableId')
   RTB=$(q ec2 describe-route-tables --filters $TAGF Name=vpc-id,Values=$VPC --query 'RouteTables[].RouteTableId'); fi
-for r in $RTB; do run aws ec2 delete-route --route-table-id "$r" --destination-cidr-block "$ONPREM_CIDR" || true; done
+if [ -n "$VGW" ] && [ "$VGW" != None ]; then
+  for r in $ALL_RTB; do
+    for c in $(q ec2 describe-route-tables --route-table-ids "$r" --query "RouteTables[0].Routes[?GatewayId=='$VGW'].DestinationCidrBlock"); do
+      run aws ec2 delete-route --route-table-id "$r" --destination-cidr-block "$c"; done
+  done
+fi
 if need VGW "$VGW"; then
   need VPC "$VPC" && run aws ec2 detach-vpn-gateway --vpn-gateway-id "$VGW" --vpc-id "$VPC"
   if [ "$APPLY" = 1 ]; then
@@ -61,6 +68,8 @@ if need VPC "$VPC"; then
   for sg in $(q ec2 describe-security-groups --filters $TAGF Name=vpc-id,Values=$VPC --query 'SecurityGroups[].GroupId'); do
     run aws ec2 delete-security-group --group-id "$sg"; done
   for r in $RTB; do
+    MAIN=$(q ec2 describe-route-tables --route-table-ids "$r" --query 'length(RouteTables[0].Associations[?Main])')
+    [ "$MAIN" = 0 ] || { echo "Main RT $r → 삭제하지 않음 (VPC 삭제 시 함께 삭제)"; continue; }
     for a in $(q ec2 describe-route-tables --route-table-ids "$r" --query 'RouteTables[0].Associations[?!Main].RouteTableAssociationId'); do
       run aws ec2 disassociate-route-table --association-id "$a"; done
     run aws ec2 delete-route-table --route-table-id "$r"; done
