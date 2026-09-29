@@ -1,0 +1,301 @@
+---
+# =========================================================
+# Jenkins AWS Extension
+#
+# 기존 1차 Jenkins는 재설치하거나 초기화하지 않는다.
+# 아래 3가지만 추가/동기화한다.
+#
+# 1. neuroplan-gitops-ssh Credential
+# 2. jenkins-ecr-aws Credential
+# 3. neuroplan-aws-ci Pipeline Job
+# =========================================================
+
+
+# ---------------------------------------------------------
+# 필수 변수 검증
+# ---------------------------------------------------------
+
+- name: Validate Jenkins AWS extension variables
+  ansible.builtin.assert:
+    that:
+      - (jenkins_api_url | default('') | length) > 0
+      - (jenkins_admin_user | default('') | length) > 0
+      - (jenkins_api_token | default('') | length) > 0
+
+      - (jenkins_gitops_credential_id | default('') | length) > 0
+      - (vault_jenkins_gitops_private_key | default('') | trim | length) > 0
+
+      - (jenkins_aws_credential_id | default('') | length) > 0
+      - (vault_jenkins_aws_access_key_id | default('') | trim | length) > 0
+      - (vault_jenkins_aws_secret_access_key | default('') | trim | length) > 0
+
+      - (jenkins_aws_job_name | default('') | length) > 0
+      - (application_github_owner | default('') | length) > 0
+      - (application_github_repository | default('') | length) > 0
+      - (application_git_branch | default('') | length) > 0
+      - (jenkins_aws_pipeline_script_path | default('') | length) > 0
+    fail_msg: "Required Jenkins AWS extension variables are missing."
+  no_log: true
+  become: false
+
+
+# =========================================================
+# Jenkins Credentials
+# =========================================================
+
+- name: Configure Jenkins AWS and GitOps credentials
+  community.general.jenkins_script:
+    script: "{{ lookup('ansible.builtin.file', role_path + '/files/manage_credentials.groovy') }}"
+
+    args:
+      gitops_credential_id: "{{ jenkins_gitops_credential_id }}"
+      gitops_private_key: "{{ vault_jenkins_gitops_private_key }}"
+
+      aws_credential_id: "{{ jenkins_aws_credential_id }}"
+      aws_access_key_id: "{{ vault_jenkins_aws_access_key_id }}"
+      aws_secret_access_key: "{{ vault_jenkins_aws_secret_access_key }}"
+
+    url: "{{ jenkins_api_url }}"
+    user: "{{ jenkins_admin_user }}"
+    password: "{{ jenkins_api_token }}"
+
+  register: jenkins_aws_credentials_result
+
+  changed_when: >
+    (jenkins_aws_credentials_result.output | default('') | trim) == 'CHANGED'
+
+  no_log: true
+  become: false
+
+  # Check Mode에서는 Jenkins Credential을 변경하지 않는다.
+  when: not ansible_check_mode
+
+
+# =========================================================
+# Jenkins Pipeline Job
+# =========================================================
+
+# CLI에서 전달된 Check Mode 값을 별도로 보존한다.
+- name: Capture Jenkins AWS execution mode
+  ansible.builtin.set_fact:
+    jenkins_aws_check_only: "{{ ansible_check_mode | bool }}"
+  changed_when: false
+
+
+# ---------------------------------------------------------
+# 현재 Job 확인
+# ---------------------------------------------------------
+
+- name: Check NeuroPlan AWS Jenkins pipeline job
+  ansible.builtin.uri:
+    url: "{{ jenkins_api_url }}/job/{{ jenkins_aws_job_name }}/config.xml"
+    method: GET
+    url_username: "{{ jenkins_admin_user }}"
+    url_password: "{{ jenkins_api_token }}"
+    force_basic_auth: true
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: jenkins_aws_job_check
+  changed_when: false
+  check_mode: false
+  no_log: true
+  become: false
+
+
+# ---------------------------------------------------------
+# 원하는 Job XML 렌더링
+# ---------------------------------------------------------
+
+- name: Render desired NeuroPlan AWS Jenkins pipeline configuration
+  ansible.builtin.set_fact:
+    jenkins_aws_desired_config_raw: >-
+      {{
+        lookup(
+          'ansible.builtin.template',
+          'neuroplan-aws-ci.xml.j2'
+        )
+      }}
+  no_log: true
+
+
+# ---------------------------------------------------------
+# 원하는 XML 정규화
+# ---------------------------------------------------------
+
+- name: Normalize desired NeuroPlan AWS Jenkins pipeline configuration
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import sys
+        import xml.etree.ElementTree as ET
+
+        xml_data = sys.stdin.read()
+        root = ET.fromstring(xml_data)
+
+        for elem in root.iter():
+            plugin = elem.attrib.get("plugin")
+
+            if plugin and "@" in plugin:
+                elem.attrib["plugin"] = plugin.split("@", 1)[0]
+
+            if elem.text is not None and not elem.text.strip():
+                elem.text = None
+
+            if elem.tail is not None and not elem.tail.strip():
+                elem.tail = None
+
+        sys.stdout.write(
+            ET.tostring(
+                root,
+                encoding="unicode",
+                short_empty_elements=True
+            )
+        )
+    stdin: "{{ jenkins_aws_desired_config_raw }}"
+  register: jenkins_aws_desired_config_normalized
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+
+# ---------------------------------------------------------
+# 현재 Job XML 정규화
+# ---------------------------------------------------------
+
+- name: Normalize current NeuroPlan AWS Jenkins pipeline configuration
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import sys
+        import xml.etree.ElementTree as ET
+
+        xml_data = sys.stdin.read()
+        root = ET.fromstring(xml_data)
+
+        for elem in root.iter():
+            plugin = elem.attrib.get("plugin")
+
+            if plugin and "@" in plugin:
+                elem.attrib["plugin"] = plugin.split("@", 1)[0]
+
+            if elem.text is not None and not elem.text.strip():
+                elem.text = None
+
+            if elem.tail is not None and not elem.tail.strip():
+                elem.tail = None
+
+        sys.stdout.write(
+            ET.tostring(
+                root,
+                encoding="unicode",
+                short_empty_elements=True
+            )
+        )
+    stdin: "{{ jenkins_aws_job_check.content }}"
+  register: jenkins_aws_current_config_normalized
+  changed_when: false
+  check_mode: false
+  when: jenkins_aws_job_check.status == 200
+  no_log: true
+
+
+# ---------------------------------------------------------
+# 생성 / 업데이트 여부 판단
+# ---------------------------------------------------------
+
+- name: Determine NeuroPlan AWS Jenkins pipeline job state
+  ansible.builtin.set_fact:
+    jenkins_aws_job_needs_create: >-
+      {{
+        jenkins_aws_job_check.status == 404
+      }}
+
+    jenkins_aws_job_needs_update: >-
+      {{
+        jenkins_aws_job_check.status == 200
+        and
+        (
+          jenkins_aws_current_config_normalized.stdout | default('')
+        )
+        !=
+        (
+          jenkins_aws_desired_config_normalized.stdout | default('')
+        )
+      }}
+  changed_when: false
+
+
+# ---------------------------------------------------------
+# Job 생성
+# ---------------------------------------------------------
+
+- name: Create NeuroPlan AWS Jenkins pipeline job
+  ansible.builtin.uri:
+    url: "{{ jenkins_api_url }}/createItem?name={{ jenkins_aws_job_name }}"
+    method: POST
+    url_username: "{{ jenkins_admin_user }}"
+    url_password: "{{ jenkins_api_token }}"
+    force_basic_auth: true
+    headers:
+      Content-Type: "application/xml"
+    body: "{{ jenkins_aws_desired_config_raw }}"
+    body_format: raw
+    status_code:
+      - 200
+      - 201
+  when:
+    - jenkins_aws_job_needs_create | bool
+    - not (jenkins_aws_check_only | bool)
+  no_log: true
+  become: false
+
+
+# ---------------------------------------------------------
+# Job 업데이트
+# ---------------------------------------------------------
+
+- name: Update NeuroPlan AWS Jenkins pipeline job
+  ansible.builtin.uri:
+    url: "{{ jenkins_api_url }}/job/{{ jenkins_aws_job_name }}/config.xml"
+    method: POST
+    url_username: "{{ jenkins_admin_user }}"
+    url_password: "{{ jenkins_api_token }}"
+    force_basic_auth: true
+    headers:
+      Content-Type: "application/xml"
+    body: "{{ jenkins_aws_desired_config_raw }}"
+    body_format: raw
+    status_code:
+      - 200
+  when:
+    - jenkins_aws_job_needs_update | bool
+    - not (jenkins_aws_check_only | bool)
+  no_log: true
+  become: false
+
+
+# ---------------------------------------------------------
+# Check Mode 결과 표시
+# ---------------------------------------------------------
+
+- name: Show Jenkins AWS pipeline job validation result
+  ansible.builtin.debug:
+    msg: >-
+      {% if jenkins_aws_job_needs_create | bool %}
+      Jenkins job '{{ jenkins_aws_job_name }}' does not exist and would be CREATED.
+      {% elif jenkins_aws_job_needs_update | bool %}
+      Jenkins job '{{ jenkins_aws_job_name }}' exists but configuration differs and would be UPDATED.
+      {% else %}
+      Jenkins job '{{ jenkins_aws_job_name }}' exists and configuration is synchronized.
+      {% endif %}
+  changed_when: >-
+    (jenkins_aws_job_needs_create | bool)
+    or
+    (jenkins_aws_job_needs_update | bool)
+  when: jenkins_aws_check_only | bool

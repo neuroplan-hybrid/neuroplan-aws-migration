@@ -1,0 +1,53 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job">
+  <actions/>
+
+  <description>NeuroPlan AWS CI Pipeline - Managed by Ansible</description>
+
+  <keepDependencies>false</keepDependencies>
+
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
+      <triggers>
+        <hudson.triggers.SCMTrigger>
+          <spec>{{ jenkins_aws_poll_scm }}</spec>
+          <ignorePostCommitHooks>false</ignorePostCommitHooks>
+        </hudson.triggers.SCMTrigger>
+      </triggers>
+    </org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
+  </properties>
+
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition"
+              plugin="workflow-cps">
+
+    <scm class="hudson.plugins.git.GitSCM"
+         plugin="git">
+
+      <configVersion>2</configVersion>
+
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>https://github.com/{{ application_github_owner }}/{{ application_github_repository }}.git</url>
+          <credentialsId>{{ jenkins_app_repo_credential_id }}</credentialsId>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/{{ application_git_branch }}</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+
+      <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
+      <submoduleCfg class="empty-list"/>
+      <extensions/>
+
+    </scm>
+
+    <scriptPath>{{ jenkins_aws_pipeline_script_path }}</scriptPath>
+    <lightweight>true</lightweight>
+
+  </definition>
+
+  <disabled>false</disabled>
+</flow-definition>

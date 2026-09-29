@@ -1,0 +1,11 @@
+---
+- name: Configure NeuroPlan AWS Jenkins extension
+  hosts: jenkins
+  gather_facts: false
+
+  vars_files:
+    - ../group_vars/all.yml
+    - ../group_vars/vault.yml
+
+  roles:
+    - role: jenkins_aws
