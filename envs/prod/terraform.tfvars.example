@@ -1,13 +1,23 @@
-aws_region           = "ap-northeast-2"
-cluster_name         = "neuroplan-rosa"
-openshift_version    = "4.21.33"
+aws_region        = "ap-northeast-2"
+cluster_name      = "neuroplan-rosa"
+openshift_version = "4.21.33"
 
-# Replace these values with the subnet IDs provided by the network team.
+machine_cidr         = "10.20.0.0/16"
+compute_machine_type = null
+rosa_replicas        = 3
+
+# ROSA HCP: Public 3AZ + Private ROSA 3AZ
+# integrate-network PR에서 network module output으로 직접 연결 예정
 aws_subnet_ids = [
-  "subnet-xxxxxxxxxxxxxxxxx",
-  "subnet-yyyyyyyyyyyyyyyyy",
-  "subnet-zzzzzzzzzzzzzzzzz"
+  "subnet-public-a",
+  "subnet-public-b",
+  "subnet-public-c",
+  "subnet-private-rosa-a",
+  "subnet-private-rosa-b",
+  "subnet-private-rosa-c"
 ]
 
 account_role_prefix  = "neuroplan"
 operator_role_prefix = "neuroplan"
+
+ecr_force_delete = true

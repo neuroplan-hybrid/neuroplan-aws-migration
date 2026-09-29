@@ -5,7 +5,10 @@ module "rosa_hcp" {
   cluster_name      = var.cluster_name
   openshift_version = var.openshift_version
 
-  aws_subnet_ids = var.aws_subnet_ids
+  machine_cidr         = var.machine_cidr
+  aws_subnet_ids       = var.aws_subnet_ids
+  compute_machine_type = var.compute_machine_type
+  replicas             = var.replicas
 
   create_account_roles = true
   account_role_prefix  = var.account_role_prefix

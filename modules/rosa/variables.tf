@@ -1,16 +1,28 @@
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-}
-
 variable "cluster_name" {
   description = "ROSA HCP cluster name"
   type        = string
 }
 
 variable "aws_subnet_ids" {
-  description = "Private subnet IDs for ROSA workers"
+  description = "Public and private subnet IDs for ROSA HCP"
   type        = list(string)
+}
+
+variable "machine_cidr" {
+  description = "Machine CIDR for ROSA HCP"
+  type        = string
+}
+
+variable "compute_machine_type" {
+  description = "EC2 instance type for ROSA worker nodes"
+  type        = string
+  default     = null
+}
+
+variable "replicas" {
+  description = "Number of ROSA worker nodes"
+  type        = number
+  default     = 3
 }
 
 variable "account_role_prefix" {
