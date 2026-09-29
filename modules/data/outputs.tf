@@ -18,6 +18,11 @@ output "rds_arn" {
   value       = try(aws_db_instance.mariadb[0].arn, null)
 }
 
+output "db_subnet_group_name" {
+  description = "Data 모듈이 생성한 RDS DB Subnet Group 이름입니다."
+  value       = try(aws_db_subnet_group.mariadb[0].name, null)
+}
+
 output "parameter_group_name" {
   description = "RDS에 연결된 사용자 지정 DB Parameter Group 이름입니다."
   value       = try(aws_db_parameter_group.mariadb[0].name, null)

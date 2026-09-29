@@ -76,13 +76,25 @@ variable "master_username" {
   type        = string
 }
 
-variable "db_subnet_group_name" {
-  description = "network 모듈이 생성한 Private DB Subnet Group 이름입니다."
+variable "db_subnet_ids" {
+  description = "Network 모듈이 제공하는 서로 다른 AZ의 Private DB Subnet ID 목록입니다."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.db_subnet_ids) >= 2
+    error_message = "RDS DB Subnet Group에는 서로 다른 AZ의 Subnet을 최소 2개 전달해야 합니다."
+  }
+}
+
+variable "db_subnet_group_name_prefix" {
+  description = "생성할 DB Subnet Group 이름 접두사입니다. null이면 <identifier>-subnets-를 사용합니다."
   type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "rds_security_group_ids" {
-  description = "network 모듈이 생성한 RDS Security Group ID 목록입니다."
+  description = "Network 모듈이 생성한 RDS Security Group ID 목록입니다."
   type        = list(string)
 }
 
