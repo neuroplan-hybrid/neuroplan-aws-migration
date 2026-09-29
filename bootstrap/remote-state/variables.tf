@@ -14,13 +14,18 @@ variable "bucket_prefix" {
 }
 
 variable "state_access_principal_arns" {
-  description = "State 객체(tfstate, tflock) 읽기·쓰기를 허용할 IAM ARN. 지정 실행자(예린) + 비상 관리자. 비어 있으면 제한 없음"
+  description = "State 객체(tfstate, tflock) 읽기·쓰기를 허용할 IAM ARN. 지정 실행자(예린) + 비상 관리자(계정 root 권장). 기본값 없음 = 필수 입력"
   type        = list(string)
-  default     = []
+  # default 없음: bootstrap.auto.tfvars를 빠뜨리면 plan 단계에서 입력을 요구하거나 실패 (fail-closed)
 
   validation {
-    condition     = alltrue([for a in var.state_access_principal_arns : can(regex("^arn:aws:(iam|sts)::[0-9]{12}:", a))])
-    error_message = "IAM 사용자/역할 ARN 형식이어야 합니다 (arn:aws:iam::<계정ID>:...)."
+    condition     = length(var.state_access_principal_arns) >= 2
+    error_message = "지정 실행자와 비상 관리자 ARN을 최소 2개 입력해야 합니다 (접근 제한 Deny가 빠진 채 생성되는 것 방지)."
+  }
+
+  validation {
+    condition     = alltrue([for a in var.state_access_principal_arns : can(regex("^arn:aws:iam::[0-9]{12}:(root|user/.+|role/.+)$", a))])
+    error_message = "IAM user/role 또는 계정 root ARN만 허용합니다 (arn:aws:iam::<계정ID>:root|user/...|role/...). STS assumed-role ARN은 사용하지 않습니다."
   }
 }
 

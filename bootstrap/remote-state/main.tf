@@ -78,6 +78,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
 # 1) TLS가 아닌 요청 거부
 # 2) state_access_principal_arns 외에는 State 객체(tfstate·tflock·과거 버전) 읽기·쓰기 거부
 #    → 관리자 권한 IAM 사용자여도 명시적 Deny가 우선
+#    ※ 이 정책은 Deny만 한다. 허용 대상도 IAM 쪽에 S3 권한이 따로 있어야 한다 (README 권한 항목)
 
 data "aws_iam_policy_document" "state" {
   statement {
@@ -101,31 +102,28 @@ data "aws_iam_policy_document" "state" {
     }
   }
 
-  dynamic "statement" {
-    for_each = length(var.state_access_principal_arns) > 0 ? [1] : []
+  # state_access_principal_arns는 필수·2개 이상(variables.tf validation) → 이 Deny는 항상 생성됨
+  statement {
+    sid    = "DenyStateObjectAccessExceptExecutors"
+    effect = "Deny"
+    actions = [
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+    ]
+    resources = ["${aws_s3_bucket.state.arn}/*"]
 
-    content {
-      sid    = "DenyStateObjectAccessExceptExecutors"
-      effect = "Deny"
-      actions = [
-        "s3:GetObject",
-        "s3:GetObjectVersion",
-        "s3:PutObject",
-        "s3:DeleteObject",
-        "s3:DeleteObjectVersion",
-      ]
-      resources = ["${aws_s3_bucket.state.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
 
-      principals {
-        type        = "*"
-        identifiers = ["*"]
-      }
-
-      condition {
-        test     = "ArnNotLike"
-        variable = "aws:PrincipalArn"
-        values   = var.state_access_principal_arns
-      }
+    condition {
+      test     = "ArnNotLike"
+      variable = "aws:PrincipalArn"
+      values   = var.state_access_principal_arns
     }
   }
 }
