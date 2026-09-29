@@ -1,5 +1,7 @@
 # ===== Terraform =====
 .terraform/
+# 모듈 폴더의 lock 파일은 커밋하지 않음 (실행 Root만 커밋, IaC 가이드 1장)
+modules/**/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 .terraform.tfstate.lock.info
