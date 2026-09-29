@@ -3,8 +3,8 @@ terraform {
 
   required_providers {
     aws = {
-      source = "hashicorp/aws"
-      # version = "" # 팀에서 확정 후 고정
+      source  = "hashicorp/aws"
+      version = ">= 6.44.0" # envs/prod·rosa와 동일 (PR #5 기준)
     }
   }
 }
