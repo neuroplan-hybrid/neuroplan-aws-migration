@@ -1,5 +1,6 @@
 # 단계: poc
 enable_rosa            = false
+enable_ecr             = true
 enable_vpn             = true
 enable_rds             = true
 rds_mode               = "poc"
