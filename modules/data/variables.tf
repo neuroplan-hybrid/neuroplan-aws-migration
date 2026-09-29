@@ -32,11 +32,21 @@ variable "identifier" {
 variable "engine_version" {
   description = "AWS RDS에서 지원하는 MariaDB 엔진 버전입니다. On-Prem 버전과 동일하게 지정합니다."
   type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+", var.engine_version))
+    error_message = "engine_version은 11.8.8과 같은 MariaDB 버전 형식이어야 합니다."
+  }
 }
 
 variable "onprem_mariadb_version" {
-  description = "양방향 복제·컷오버 대상 On-Prem MariaDB 버전입니다."
+  description = "양방향 복제·컷오버 대상 On-Prem MariaDB 버전입니다. major.minor는 RDS와 일치해야 합니다."
   type        = string
+
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+", var.onprem_mariadb_version))
+    error_message = "onprem_mariadb_version은 11.8.8과 같은 MariaDB 버전 형식이어야 합니다."
+  }
 }
 
 variable "instance_class" {
@@ -76,8 +86,8 @@ variable "rds_security_group_ids" {
   type        = list(string)
 }
 
-variable "parameter_group_name" {
-  description = "생성할 사용자 지정 DB Parameter Group 이름입니다. null이면 <identifier>-params를 사용합니다."
+variable "parameter_group_name_prefix" {
+  description = "생성할 사용자 지정 DB Parameter Group 이름 접두사입니다. null이면 <identifier>-params-를 사용합니다."
   type        = string
   default     = null
   nullable    = true

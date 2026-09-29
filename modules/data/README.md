@@ -23,7 +23,9 @@ RDS for MariaDB를 생성하는 정현 담당 모듈이다. 네트워크 리소�
 - `collation_server = utf8mb4_uca1400_ai_ci`
 - `time_zone = Asia/Seoul`
 
-`parameter_group_parameters` 입력값으로 Parameter Group 값을 바꿀 수 있으나, PoC와 컷오버 전에는 On-Prem 설정과 비교해야 한다. 특히 RDS가 Source가 되는 컷오버 이후에도 복제를 유지하려면 양쪽 MariaDB 엔진 버전을 동일하게 유지한다. 모듈은 `engine_version`과 `onprem_mariadb_version`이 다르면 생성 Plan을 중단한다.
+`parameter_group_parameters` 입력값으로 Parameter Group 값을 바꿀 수 있으나, PoC와 컷오버 전에는 On-Prem 설정과 비교해야 한다. Parameter Group은 `name_prefix`와 `create_before_destroy`를 사용하므로 engine family 변경 시 새 그룹을 먼저 생성할 수 있다.
+
+RDS가 Source가 되는 컷오버 이후에도 복제를 유지하려면 양쪽 MariaDB의 major.minor 버전이 일치해야 한다. 모듈은 `engine_version`과 `onprem_mariadb_version`의 major.minor가 다르면 생성 Plan을 중단한다. 패치 버전 차이는 AWS RDS 제공 버전과 On-Prem 패치 버전 차이를 고려해 허용한다.
 
 ## 모듈 경계
 

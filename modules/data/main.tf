@@ -8,7 +8,7 @@
 resource "aws_db_parameter_group" "mariadb" {
   count = var.enabled ? 1 : 0
 
-  name        = coalesce(var.parameter_group_name, "${var.identifier}-params")
+  name_prefix = coalesce(var.parameter_group_name_prefix, "${var.identifier}-params-")
   family      = var.parameter_group_family
   description = "${var.project_name} ${var.rds_mode} MariaDB parameter group"
 
@@ -24,7 +24,7 @@ resource "aws_db_parameter_group" "mariadb" {
 
   tags = merge(
     {
-      Name        = coalesce(var.parameter_group_name, "${var.identifier}-params")
+      Name        = coalesce(var.parameter_group_name_prefix, "${var.identifier}-params-")
       Project     = var.project_name
       Environment = var.environment
       ManagedBy   = "Terraform"
@@ -32,6 +32,10 @@ resource "aws_db_parameter_group" "mariadb" {
     },
     var.tags,
   )
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_db_instance" "mariadb" {
@@ -86,8 +90,11 @@ resource "aws_db_instance" "mariadb" {
 
   lifecycle {
     precondition {
-      condition     = var.engine_version == var.onprem_mariadb_version
-      error_message = "RDS와 On-Prem MariaDB 버전은 양방향 복제·컷오버 전에 동일하게 맞춰야 합니다."
+      condition = (
+        regex("^[0-9]+\\.[0-9]+", var.engine_version) ==
+        regex("^[0-9]+\\.[0-9]+", var.onprem_mariadb_version)
+      )
+      error_message = "RDS와 On-Prem MariaDB의 major.minor 버전은 양방향 복제·컷오버 전에 일치해야 합니다."
     }
 
     precondition {
