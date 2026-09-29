@@ -3,6 +3,37 @@
 # 네트워크 리소스(VPC, Subnet, VPN, Route Table, Security Group)는 만들거나 수정하지 않는다.
 # envs/prod가 network 모듈의 Output을 이 모듈의 입력값으로 전달한다.
 
+# 기본 DB Parameter Group은 수정할 수 없으므로, 복제·컷오버에 필요한
+# binlog/문자셋/시간대 값을 적용할 수 있는 전용 그룹을 생성한다.
+resource "aws_db_parameter_group" "mariadb" {
+  count = var.enabled ? 1 : 0
+
+  name        = coalesce(var.parameter_group_name, "${var.identifier}-params")
+  family      = var.parameter_group_family
+  description = "${var.project_name} ${var.rds_mode} MariaDB parameter group"
+
+  dynamic "parameter" {
+    for_each = var.parameter_group_parameters
+
+    content {
+      name         = parameter.key
+      value        = parameter.value.value
+      apply_method = parameter.value.apply_method
+    }
+  }
+
+  tags = merge(
+    {
+      Name        = coalesce(var.parameter_group_name, "${var.identifier}-params")
+      Project     = var.project_name
+      Environment = var.environment
+      ManagedBy   = "Terraform"
+      RdsMode     = var.rds_mode
+    },
+    var.tags,
+  )
+}
+
 resource "aws_db_instance" "mariadb" {
   count = var.enabled ? 1 : 0
 
@@ -27,6 +58,7 @@ resource "aws_db_instance" "mariadb" {
   # network 모듈에서 생성한 기존 리소스만 참조한다.
   db_subnet_group_name   = var.db_subnet_group_name
   vpc_security_group_ids = var.rds_security_group_ids
+  parameter_group_name   = aws_db_parameter_group.mariadb[0].name
   publicly_accessible    = false
 
   multi_az                = var.multi_az
@@ -53,6 +85,11 @@ resource "aws_db_instance" "mariadb" {
   )
 
   lifecycle {
+    precondition {
+      condition     = var.engine_version == var.onprem_mariadb_version
+      error_message = "RDS와 On-Prem MariaDB 버전은 양방향 복제·컷오버 전에 동일하게 맞춰야 합니다."
+    }
+
     precondition {
       condition     = var.skip_final_snapshot || var.final_snapshot_identifier != null
       error_message = "skip_final_snapshot=false이면 final_snapshot_identifier를 지정해야 합니다."

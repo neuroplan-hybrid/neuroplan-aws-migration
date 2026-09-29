@@ -30,7 +30,12 @@ variable "identifier" {
 }
 
 variable "engine_version" {
-  description = "AWS RDS에서 지원하는 MariaDB 엔진 버전입니다."
+  description = "AWS RDS에서 지원하는 MariaDB 엔진 버전입니다. On-Prem 버전과 동일하게 지정합니다."
+  type        = string
+}
+
+variable "onprem_mariadb_version" {
+  description = "양방향 복제·컷오버 대상 On-Prem MariaDB 버전입니다."
   type        = string
 }
 
@@ -69,6 +74,47 @@ variable "db_subnet_group_name" {
 variable "rds_security_group_ids" {
   description = "network 모듈이 생성한 RDS Security Group ID 목록입니다."
   type        = list(string)
+}
+
+variable "parameter_group_name" {
+  description = "생성할 사용자 지정 DB Parameter Group 이름입니다. null이면 <identifier>-params를 사용합니다."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "parameter_group_family" {
+  description = "RDS MariaDB 엔진 버전에 맞는 DB Parameter Group family입니다. MariaDB 11.8은 mariadb11.8을 사용합니다."
+  type        = string
+  default     = "mariadb11.8"
+}
+
+variable "parameter_group_parameters" {
+  description = "사용자 지정 DB Parameter Group에 적용할 MariaDB 파라미터입니다. 값은 On-Prem 설정과 일치시킵니다."
+
+  type = map(object({
+    value        = string
+    apply_method = string
+  }))
+
+  default = {
+    binlog_format = {
+      value        = "ROW"
+      apply_method = "immediate"
+    }
+    character_set_server = {
+      value        = "utf8mb4"
+      apply_method = "pending-reboot"
+    }
+    collation_server = {
+      value        = "utf8mb4_uca1400_ai_ci"
+      apply_method = "pending-reboot"
+    }
+    time_zone = {
+      value        = "Asia/Seoul"
+      apply_method = "pending-reboot"
+    }
+  }
 }
 
 variable "multi_az" {

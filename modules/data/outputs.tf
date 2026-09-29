@@ -18,6 +18,11 @@ output "rds_arn" {
   value       = try(aws_db_instance.mariadb[0].arn, null)
 }
 
+output "parameter_group_name" {
+  description = "RDS에 연결된 사용자 지정 DB Parameter Group 이름입니다."
+  value       = try(aws_db_parameter_group.mariadb[0].name, null)
+}
+
 output "master_user_secret_arn" {
   description = "RDS가 생성한 Master 자격 증명의 Secrets Manager ARN입니다."
   value       = try(aws_db_instance.mariadb[0].master_user_secret[0].secret_arn, null)
