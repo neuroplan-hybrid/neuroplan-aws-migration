@@ -2,20 +2,11 @@ aws_region        = "ap-northeast-2"
 cluster_name      = "neuroplan-rosa"
 openshift_version = "4.21.33"
 
-machine_cidr         = "10.20.0.0/16"
 compute_machine_type = null
 rosa_replicas        = 3
 
-# ROSA HCP: Public 3AZ + Private ROSA 3AZ
-# integrate-network PR에서 network module output으로 직접 연결 예정
-aws_subnet_ids = [
-  "subnet-public-a",
-  "subnet-public-b",
-  "subnet-public-c",
-  "subnet-private-rosa-a",
-  "subnet-private-rosa-b",
-  "subnet-private-rosa-c"
-]
+# ROSA 서브넷(aws_subnet_ids)과 machine_cidr는 module.network 출력으로 자동 연결 (integrate-network)
+# VPN PSK는 여기에 쓰지 않음 → export TF_VAR_vpn_tunnel1_preshared_key=... (IaC 가이드 5.1)
 
 account_role_prefix  = "neuroplan"
 operator_role_prefix = "neuroplan"

@@ -71,22 +71,10 @@ variable "operator_role_prefix" {
   default     = "neuroplan"
 }
 
-variable "aws_subnet_ids" {
-  description = "Public and private subnet IDs for ROSA HCP"
-  type        = list(string)
-  default     = []
-}
-
 variable "openshift_version" {
   description = "OpenShift version for ROSA HCP"
   type        = string
   default     = null
-}
-
-variable "machine_cidr" {
-  description = "Machine CIDR for ROSA HCP"
-  type        = string
-  default     = "10.20.0.0/16"
 }
 
 variable "compute_machine_type" {
@@ -99,6 +87,22 @@ variable "rosa_replicas" {
   description = "Number of ROSA worker nodes"
   type        = number
   default     = 3
+}
+
+# Hybrid / S2S VPN
+# 값은 tfvars에 쓰지 않고 TF_VAR_ 로만 전달. sensitive와 무관하게 state에는 평문 저장 (IaC 가이드 5.1)
+variable "vpn_tunnel1_preshared_key" {
+  description = "VPN 터널 1 PSK (null이면 AWS 생성)"
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "vpn_tunnel2_preshared_key" {
+  description = "VPN 터널 2 PSK (null이면 AWS 생성)"
+  type        = string
+  default     = null
+  sensitive   = true
 }
 
 # ECR
