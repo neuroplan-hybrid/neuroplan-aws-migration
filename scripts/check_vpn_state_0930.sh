@@ -7,6 +7,9 @@
 #     <vpn-id>: Terraform output vpn_connection_id (예: vpn-0123456789abcdef0)
 #     - 텔레메트리 Outside IP 2개가 aws.conf aws-tun1/aws-tun2의 right=와 같은지도 대조
 # 종료 코드: 0 = 전부 OK, 1 = FAIL 1개 이상 (preflight에서 그대로 사용)
+# 주의: 조건문에 "명령 | grep -q"를 쓰지 않는다. pipefail에서 grep -q가 먼저 끝나면
+#       앞 명령이 SIGPIPE(141)로 종료돼 값이 있어도 FAIL로 판정됨 (작업일지 0930 3.9)
+#       → 출력을 변수에 담은 뒤 grep -q ... <<< "$변수"
 set -uo pipefail
 
 VPC_CIDR="10.20.0.0/16"
@@ -48,7 +51,8 @@ if [[ "$st" == "enabled" ]]; then ok "ipsec enabled"; else ng "ipsec $st (부팅
 
 echo "[updown 훅]"
 if [[ -x "$WRAPPER" ]]; then ok "$WRAPPER 실행 가능"; else ng "$WRAPPER 없음/실행 불가"; fi
-if conn_block aws-common | grep -qE "^\s*leftupdown=${WRAPPER}\s*$"; then
+common_blk="$(conn_block aws-common)"
+if grep -qE "^\s*leftupdown=${WRAPPER}\s*$" <<< "$common_blk"; then
     ok "conn aws-common leftupdown 설정"
 else
     ng "conn aws-common leftupdown 없음"
@@ -59,9 +63,10 @@ esp="$(ipsec trafficstatus 2>/dev/null | grep -c 'type=ESP' || true)"
 if [[ "$esp" == "2" ]]; then ok "ESP 2개"; else ng "ESP ${esp}개 (기대 2)"; fi
 
 echo "[라우트 $VPC_CIDR]"
+routes="$(ip -4 route show "$VPC_CIDR" 2>/dev/null)"
 for pair in "vti1 100" "vti2 200"; do
     read -r dev metric <<< "$pair"
-    if ip -4 route show "$VPC_CIDR" | grep -qE "dev ${dev} .*metric ${metric}\b"; then
+    if grep -qE "dev ${dev} .*metric ${metric}\b" <<< "$routes"; then
         ok "dev $dev metric $metric"
     else
         ng "dev $dev metric $metric 없음"
