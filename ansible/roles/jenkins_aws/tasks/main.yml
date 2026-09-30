@@ -30,6 +30,7 @@
       - (vault_jenkins_aws_secret_access_key | default('') | trim | length) > 0
 
       - (jenkins_aws_job_name | default('') | length) > 0
+      - (jenkins_aws_runtime_user | default('') | length) > 0
       - (application_github_owner | default('') | length) > 0
       - (application_github_repository | default('') | length) > 0
       - (application_git_branch | default('') | length) > 0
@@ -41,9 +42,10 @@
 
 # ---------------------------------------------------------
 # Jenkins AWS CI 실행 도구 사전 점검
+# Built-in Node의 실제 Jenkins OS 계정 기준으로 확인한다.
 # ---------------------------------------------------------
 
-- name: Check Jenkins AWS CI prerequisite commands
+- name: Check Jenkins AWS CI prerequisite commands as Jenkins runtime user
   ansible.builtin.command:
     argv:
       - bash
@@ -60,7 +62,22 @@
   register: jenkins_aws_prerequisite_check
   changed_when: false
   check_mode: false
-  become: false
+  become: true
+  become_user: "{{ jenkins_aws_runtime_user }}"
+  become_flags: "-H"
+
+- name: Verify Jenkins runtime user can access Docker daemon
+  ansible.builtin.command:
+    argv:
+      - docker
+      - info
+  register: jenkins_aws_docker_access_check
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ jenkins_aws_runtime_user }}"
+  become_flags: "-H"
+  no_log: true
 
 
 # =========================================================
