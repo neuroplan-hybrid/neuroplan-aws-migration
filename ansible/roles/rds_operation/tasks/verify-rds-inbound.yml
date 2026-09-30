@@ -7,7 +7,7 @@
     mariadb --protocol=tcp \
       --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
       --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
-      --execute "CALL mysql.rds_show_slave_status;"
+      --vertical --execute "CALL mysql.rds_show_slave_status;"
   args:
     executable: /bin/bash
   environment:

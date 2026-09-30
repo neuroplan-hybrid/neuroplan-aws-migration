@@ -53,5 +53,7 @@ Thumbs.db
 
 # ===== Ansible local / secret files =====
 ansible/group_vars/vault.yml
+ansible/inventory/rds-operation.ini
+ansible/group_vars/rds_operation.yml
 ansible/collections/
 !ansible/roles/jenkins_aws/files/manage_credentials.groovy
