@@ -1,8 +1,11 @@
 #!/bin/bash
 # neuroplan-vti-updown — libreswan leftupdown 래퍼 (작업일지 0930 9장)
 # 1) 기본 updown 실행 (종료 코드 보존)
-# 2) up-client  : 기본 updown 성공(rc=0) + vti 인터페이스 UP일 때만
-#                 vti 라우트 + rp_filter=2 + disable_policy=1 (libreswan은 vti 생성 시에만 0으로 설정)
+# 2) up-client  : vti 라우트 + rp_filter=2 + disable_policy=1 (libreswan은 vti 생성 시에만 0으로 설정)
+#                 단계별 실패(_updown rc≠0, vti 없음/DOWN, sysctl, ip route replace) 시
+#                 해당 vti 라우트 제거 + 오류 로그(daemon.err) + non-zero 종료
+#                 → libreswan 4.15는 up-client 실패를 Child SA 설치 실패로 처리해 SA를 지우고 재시도
+#                   (터널 UP인데 라우트·rp_filter가 없는 상태를 남기지 않음, down-client는 호출되지 않음)
 # 3) down-client: 기본 updown 결과와 무관하게 해당 vti 라우트 삭제 → 반대 터널로 failover
 #                 (라우트가 남으면 내려간 터널로 트래픽이 계속 향함)
 /usr/libexec/ipsec/_updown "$@"
@@ -16,20 +19,26 @@ case "${VTI_IFACE:-}" in
     *)    exit "$rc" ;;
 esac
 
+# up-client 실패 처리: 이 vti 라우트를 남기지 않고 오류 로그 후 non-zero 종료
+fail_up() {
+    ip route del "${VPC_CIDR}" dev "${VTI_IFACE}" metric "${METRIC}" 2>/dev/null
+    logger -p daemon.err -t "$TAG" "${PLUTO_CONNECTION} up FAIL: $1 → ${VTI_IFACE} 라우트 제거, exit ${2:-1}"
+    exit "${2:-1}"
+}
+
 case "${PLUTO_VERB:-}" in
     up-client)
-        if (( rc != 0 )); then
-            logger -t "$TAG" "${PLUTO_CONNECTION} up: _updown rc=${rc} → 라우트·sysctl 적용 안 함"
-            exit "$rc"
-        fi
+        (( rc == 0 )) || fail_up "_updown rc=${rc}" "$rc"
         # rc는 _updown 마지막 함수의 결과만 반영 → vti 생성 실패는 인터페이스 상태로 확인
-        if [[ -z "$(ip link show "${VTI_IFACE}" up 2>/dev/null)" ]]; then
-            logger -t "$TAG" "${PLUTO_CONNECTION} up: ${VTI_IFACE} 없음 또는 DOWN → 라우트·sysctl 적용 안 함"
-            exit "$rc"
+        [[ -n "$(ip link show "${VTI_IFACE}" up 2>/dev/null)" ]] || fail_up "${VTI_IFACE} 없음 또는 DOWN"
+        for kv in rp_filter=2 disable_policy=1; do
+            if ! out="$(sysctl -qw "net.ipv4.conf.${VTI_IFACE}.${kv}" 2>&1)"; then
+                fail_up "sysctl net.ipv4.conf.${VTI_IFACE}.${kv} 실패 (${out:-no output})"
+            fi
+        done
+        if ! out="$(ip route replace "${VPC_CIDR}" dev "${VTI_IFACE}" metric "${METRIC}" 2>&1)"; then
+            fail_up "ip route replace ${VPC_CIDR} dev ${VTI_IFACE} metric ${METRIC} 실패 (${out:-no output})"
         fi
-        sysctl -qw "net.ipv4.conf.${VTI_IFACE}.rp_filter=2" \
-                   "net.ipv4.conf.${VTI_IFACE}.disable_policy=1"
-        ip route replace "${VPC_CIDR}" dev "${VTI_IFACE}" metric "${METRIC}"
         logger -t "$TAG" "${PLUTO_CONNECTION} up: ${VPC_CIDR} dev ${VTI_IFACE} metric ${METRIC}, rp_filter=2 (_updown rc=${rc})"
         ;;
     down-client)
