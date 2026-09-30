@@ -1,0 +1,12 @@
+---
+- name: Configure NeuroPlan ROSA OpenShift GitOps
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - ../group_vars/all.yml
+    - ../group_vars/vault.yml
+
+  roles:
+    - role: rosa_gitops
