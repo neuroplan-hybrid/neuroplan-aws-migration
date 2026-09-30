@@ -1,0 +1,28 @@
+#!/bin/bash
+# neuroplan-vti-updown — libreswan leftupdown 래퍼 (작업일지 0930 9장)
+# 1) 기본 updown 실행
+# 2) up-client  : vti 라우트 + rp_filter=2 + disable_policy=1 (libreswan은 vti 생성 시에만 0으로 설정)
+# 3) down-client: 해당 vti 라우트 삭제 → 반대 터널로 failover
+/usr/libexec/ipsec/_updown "$@"
+rc=$?
+
+VPC_CIDR="10.20.0.0/16"
+case "${VTI_IFACE}" in
+    vti1) METRIC=100 ;;
+    vti2) METRIC=200 ;;
+    *)    exit "$rc" ;;
+esac
+
+case "${PLUTO_VERB}" in
+    up-client)
+        sysctl -qw "net.ipv4.conf.${VTI_IFACE}.rp_filter=2" \
+                   "net.ipv4.conf.${VTI_IFACE}.disable_policy=1"
+        ip route replace "${VPC_CIDR}" dev "${VTI_IFACE}" metric "${METRIC}"
+        logger -t neuroplan-vti-updown "${PLUTO_CONNECTION} up: ${VPC_CIDR} dev ${VTI_IFACE} metric ${METRIC}, rp_filter=2"
+        ;;
+    down-client)
+        ip route del "${VPC_CIDR}" dev "${VTI_IFACE}" metric "${METRIC}" 2>/dev/null
+        logger -t neuroplan-vti-updown "${PLUTO_CONNECTION} down: ${VPC_CIDR} dev ${VTI_IFACE} removed"
+        ;;
+esac
+exit "$rc"
