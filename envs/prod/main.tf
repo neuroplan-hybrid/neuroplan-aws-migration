@@ -10,6 +10,12 @@ module "network" {
 
   enable_nat = var.enable_nat
 
+  # RDS 3306 추가 허용 (ROSA 서브넷은 rds_allow_from_rosa로 자동 허용)
+  # - 192.168.44.21: 기존 기본값 유지 (PoC 덤프·복제 설정)
+  # - 192.168.44.51, .52: Cutover 후 On-Prem db-primary·db-replica → RDS 복제 (#18, ansible/README-rds-operation.md)
+  # 규칙 키가 "extra-<CIDR>"라 기존 44.21 규칙은 교체되지 않고 2개만 추가됨
+  rds_ingress_cidrs = ["192.168.44.21/32", "192.168.44.51/32", "192.168.44.52/32"]
+
   tags = { Owner = "heejae" }
 }
 

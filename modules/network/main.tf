@@ -1,8 +1,8 @@
 # network — VPC, 3AZ Subnet(Public / Private ROSA / Private DB), IGW, NAT, RT, RDS SG
 # 담당: 희재
 # - 온프렘 대역 → VGW 경로는 hybrid 모듈에서 추가 (route_table_ids 입력)
-# - DB Subnet Group은 data 모듈(정현)에서 db_subnet_ids로 생성 (소속 합의 필요)
-# - S3 Gateway Endpoint는 다음 PR
+# - DB Subnet Group은 data 모듈(정현)에서 db_subnet_ids로 생성 (0929 합의)
+# - S3 Gateway Endpoint: ROSA 서브넷 RT에 연결 (NAT 우회, 비용 절감)
 
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
@@ -124,6 +124,32 @@ resource "aws_route" "rosa_nat" {
   route_table_id         = aws_route_table.rosa.id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.main[0].id
+}
+
+# ---------- S3 Gateway Endpoint (비용 절감 설계, 2차 시나리오 10.2) ----------
+# ROSA 워커가 S3(ECR 이미지 레이어 포함)를 받을 때 NAT를 거치지 않게 함 → NAT 데이터 처리 요금 절감
+# Gateway 타입은 시간·데이터 요금 없음. 연결한 RT에 S3 prefix list 경로가 추가됨
+# (이 모듈·hybrid 모듈은 경로를 aws_route로만 관리 → inline route drift 없음)
+
+data "aws_region" "current" {}
+
+resource "aws_vpc_endpoint" "s3" {
+  count = var.enable_s3_gateway_endpoint ? 1 : 0
+
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
+  vpc_endpoint_type = "Gateway"
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-s3-gw-endpoint"
+  })
+}
+
+resource "aws_vpc_endpoint_route_table_association" "s3_rosa" {
+  count = var.enable_s3_gateway_endpoint ? 1 : 0
+
+  vpc_endpoint_id = aws_vpc_endpoint.s3[0].id
+  route_table_id  = aws_route_table.rosa.id
 }
 
 # ---------- Private DB Subnet ----------

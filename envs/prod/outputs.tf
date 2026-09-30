@@ -27,6 +27,11 @@ output "rds_security_group_id" {
 }
 
 # ---------- Hybrid / S2S VPN ----------
+output "vpn_connection_id" {
+  description = "S2S VPN Connection ID (온프렘 점검 scripts/check_vpn_state_0930.sh --aws 인자). enable_vpn=false면 null"
+  value       = module.hybrid.vpn_connection_id
+}
+
 output "vpn_tunnels" {
   description = "libreswan aws.conf 갱신용 (right = outside_ip). enable_vpn=false면 null"
   value       = module.hybrid.tunnels

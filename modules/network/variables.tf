@@ -101,6 +101,12 @@ variable "rds_egress_cidrs" {
   default     = ["192.168.44.51/32"]
 }
 
+variable "enable_s3_gateway_endpoint" {
+  description = "S3 Gateway Endpoint 생성 후 ROSA 서브넷 RT에 연결 (시간·데이터 요금 없음)"
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "모든 리소스에 추가할 태그 (Project/Owner/Phase는 envs/prod provider default_tags 권장)"
   type        = map(string)
