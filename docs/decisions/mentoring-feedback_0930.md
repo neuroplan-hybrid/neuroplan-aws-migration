@@ -201,14 +201,17 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | 희재안 | 채택하되 **P1**, 범위를 좁힘 |
 | 예린안 | 채택 추천. Kubernetes Secret의 고정 DB 계정 → Vault 동적 자격증명. 리뷰: P1 유지 동의, **Vault 설치·연동은 예린**, DB role·권한과 CREATE/DROP USER 복제 검증은 정현과 분담 |
 | 정현 의견 | **P1 별도 PoC**, W2/W3의 RDS 전환·DR 핵심 경로를 막지 않는 조건 |
-| **결정** | **P1 별도 PoC** (RDS 전환·DR 핵심 경로를 막지 않는 조건). 아래 1~5 적용 |
+| **결정** | **P1 목표: Cutover 후 ROSA Backend → RDS 운영 경로에 HashiCorp Vault 동적 자격증명을 실제 적용** (W2/W3의 RDS 전환·DR 핵심 경로를 막지 않는 조건). 아래 1~5 적용 |
+| 정현 추가 리뷰 | P1 목표를 "적용 검토"가 아니라 **운영 경로 실제 적용**으로 명시. TTL 15분 검증 role과 Backend 기본 계정 정책을 구분 |
 | 담당 | Vault 설치·연동 **예린** / DB role·권한, 동적 계정 DDL 복제 검증 **정현** |
 
 **적용 조건 (희재 제기 → 정현·예린 리뷰로 확정)**
 1. **DR 의존성**: Vault를 ROSA에 두면 ROSA 장애(T6) 때 Vault도 같이 멈춤 → **온프렘 DR 앱은 정적 계정 유지** (Ansible Vault로 관리). 발표 근거: "DR 경로는 의존성을 줄이기 위해 동적 자격증명을 쓰지 않음"
-2. **적용 범위**: 이관 단계 Writer는 온프렘, Cutover 후 RDS → **Cutover 후 RDS에 연결하는 ROSA Backend 앱 DB 계정에만** 적용 검토
+2. **적용 범위**: 이관 단계 Writer는 온프렘, Cutover 후 RDS → **Cutover 후 RDS에 연결하는 ROSA Backend 앱 DB 계정에 실제 적용** (다른 경로는 적용하지 않음)
 3. **복제 영향**: RDS에서 생성·삭제한 동적 계정 DDL(CREATE/DROP USER)의 온프렘 Replica 전파 여부 → **P1 검증 항목** (정현)
-4. **TTL·커넥션 풀**: **TTL 15분은 시연용 role로 먼저 검증**. 지속 실행되는 Backend 계정은 자격증명 갱신·Connection Pool 재연결 방식(Vault Secrets Operator `rolloutRestartTargets` 등) 확인 후 결정
+4. **role 구분**
+   - **검증용 role (TTL 15분)**: 동적 계정 생성·만료(계정 삭제)를 확인하는 별도 role. 시연용
+   - **Backend 기본 role**: 자격증명 갱신과 Connection Pool 재연결(Vault Secrets Operator `rolloutRestartTargets` 등)을 검증한 뒤 **더 긴 TTL 또는 자동 갱신 정책**으로 적용
 5. **Secrets Manager 역할**: RDS Master Secret은 기존대로 Secrets Manager(`manage_master_user_password`). Vault는 그 위에서 앱 계정만 발급
 
 ### F. 비용 최적화 (F9, F10)
@@ -258,7 +261,7 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | B-2 | DR 시연: 핵심 T6 + 이관 단계는 진입 경로 장애만 | P0 | 희재·정현 | 10/12~14 | ✅ 확정 |
 | C | k6 도입, probe.sh는 보조 | P0 | 희재 (Endpoint 정현) | 10/6 전 초안 | ✅ 확정 |
 | D | 대상 3종·기준, 배포 무중단, PDB·PriorityClass | P0 | 예린·정현 | 10/6 전 | ✅ 확정 |
-| E | Vault 별도 PoC (Cutover 후 ROSA Backend 앱 계정, DR은 정적 계정) | P1 | 설치·연동 예린 / DB role·복제 검증 정현 | ROSA 기간 | ✅ 확정 |
+| E | Vault 동적 자격증명을 Cutover 후 ROSA Backend → RDS 운영 경로에 실제 적용 (검증용 TTL 15분 role 별도, DR은 정적 계정) | P1 | 설치·연동 예린 / DB role·복제 검증 정현 | ROSA 기간 | ✅ 확정 |
 | F | DB·전송 비용 반영, 10/7 실측, 종료 destroy | P0 | 비용표 예린·희재 | 10/7 | ✅ 확정 |
 | F-2 | 워커 스케줄 축소 (별도 Machine Pool/Autoscaling) | P1 후보 | 예린 | 검증 후 | 3대 유지, 별도 Plan·승인 |
 | — | cert-manager 자동 갱신 | P2 | 예린 | — | |
@@ -284,7 +287,7 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | GSLB | Route 53 (명칭 없음) | **Route 53 = GSLB** 명시, 5:5 분배 검증 추가 |
 | DR 시연 | T6 (ROSA → 온프렘) | T6 유지 + **이관 단계 온프렘 진입 장애 → ROSA** 보조 |
 | 인증서 | Router·NGF에 같은 인증서 | 동일 + **Route 단위 TLS** 명시, 별도 Ingress 없음 |
-| 시크릿 | Secrets Manager | Secrets Manager(Master) + **Vault 동적 계정(P1)** |
+| 시크릿 | Secrets Manager | Secrets Manager(Master) + **Vault 동적 자격증명(P1, Cutover 후 ROSA Backend → RDS 실제 적용)** + 온프렘 DR 정적 계정(Ansible Vault) |
 | 앱 HA | HPA/PDB | + **PriorityClass, startupProbe, Topology Spread** |
 | 비용 | ROSA 12일 상시 3대 | **3대 유지** + DB·전송 비용 반영, 10/7 실측. 스케줄 축소는 P1 후보(별도 Machine Pool/Autoscaling) |
 | ROSA 제약 해석 | "껐다 켜면 문제" | **클러스터 재생성은 금지**. 워커 수 조정은 별도 구조·Plan·승인이 있을 때만 |
