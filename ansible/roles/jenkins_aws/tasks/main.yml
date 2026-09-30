@@ -39,6 +39,30 @@
   become: false
 
 
+# ---------------------------------------------------------
+# Jenkins AWS CI 실행 도구 사전 점검
+# ---------------------------------------------------------
+
+- name: Check Jenkins AWS CI prerequisite commands
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -lc
+      - "command -v {{ item }}"
+  loop:
+    - aws
+    - docker
+    - git
+    - mvn
+    - python3
+    - kubectl
+    - ssh
+  register: jenkins_aws_prerequisite_check
+  changed_when: false
+  check_mode: false
+  become: false
+
+
 # =========================================================
 # Jenkins Credentials
 # =========================================================
