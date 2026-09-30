@@ -1,0 +1,13 @@
+---
+# T6 DR Drill 전용. 한 개의 On-Prem Replica만 수동 승격한다.
+
+- name: Promote exactly one approved On-Prem DR replica
+  hosts: onprem_replicas
+  become: true
+  gather_facts: false
+  serial: 1
+  vars:
+    rds_operation_node_role: onprem_replica
+    rds_operation_run_mode: dr-promote
+  roles:
+    - role: rds_operation

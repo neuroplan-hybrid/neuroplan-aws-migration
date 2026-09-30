@@ -1,0 +1,26 @@
+---
+- name: Verify TCP 3306 from this On-Prem DB to RDS
+  ansible.builtin.wait_for:
+    host: "{{ rds_operation_endpoint }}"
+    port: "{{ rds_operation_port }}"
+    timeout: 10
+    state: started
+  changed_when: false
+
+- name: Read On-Prem MariaDB replication prerequisites
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --batch
+      - --skip-column-names
+      - --execute
+      - >-
+        SELECT @@hostname, @@version, @@log_bin, @@binlog_format,
+        @@gtid_strict_mode, @@log_slave_updates, @@read_only, @@gtid_current_pos;
+  register: rds_operation_onprem_prerequisites
+  changed_when: false
+
+- name: Display On-Prem MariaDB prerequisites
+  ansible.builtin.debug:
+    var: rds_operation_onprem_prerequisites.stdout_lines

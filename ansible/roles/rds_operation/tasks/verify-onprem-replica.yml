@@ -1,0 +1,23 @@
+---
+- name: Read On-Prem replica status
+  ansible.builtin.shell: |
+    mariadb --protocol=socket --batch --skip-column-names --execute "SHOW SLAVE STATUS\\G"
+  args:
+    executable: /bin/bash
+  register: rds_operation_onprem_replica_status
+  changed_when: false
+
+- name: Require healthy RDS to On-Prem replication
+  ansible.builtin.assert:
+    that:
+      - rds_operation_onprem_replica_status.stdout is search('Master_Host:[[:space:]]+' ~ rds_operation_endpoint)
+      - rds_operation_onprem_replica_status.stdout is search('Slave_IO_Running:[[:space:]]+Yes')
+      - rds_operation_onprem_replica_status.stdout is search('Slave_SQL_Running:[[:space:]]+Yes')
+      - rds_operation_onprem_replica_status.stdout is search('Using_Gtid:[[:space:]]+Slave_Pos')
+      - rds_operation_onprem_replica_status.stdout is not search('Last_IO_Error:[[:space:]]+[^[:space:]]')
+      - rds_operation_onprem_replica_status.stdout is not search('Last_SQL_Error:[[:space:]]+[^[:space:]]')
+    fail_msg: "On-Prem DB가 정상적인 RDS Replica가 아닙니다. DR Drill을 진행하지 마세요."
+
+- name: Display sanitized replica result
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: RDS replica healthy (IO=Yes, SQL=Yes)."

@@ -1,0 +1,20 @@
+---
+- name: Require RDS connection values
+  ansible.builtin.assert:
+    that:
+      - rds_operation_endpoint | length > 0
+      - rds_operation_master_secret_arn | length > 0
+      - rds_operation_aws_region | length > 0
+    fail_msg: "Terraform Output의 RDS Endpoint, Master Secret ARN, 리전을 입력하세요."
+
+- name: Verify AWS CLI is available to read Secrets Manager
+  ansible.builtin.command: aws --version
+  changed_when: false
+
+- name: Verify TCP 3306 from the controller to RDS
+  ansible.builtin.wait_for:
+    host: "{{ rds_operation_endpoint }}"
+    port: "{{ rds_operation_port }}"
+    timeout: 10
+    state: started
+  changed_when: false

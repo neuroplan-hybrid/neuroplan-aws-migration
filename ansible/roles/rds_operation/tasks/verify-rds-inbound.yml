@@ -1,0 +1,29 @@
+---
+- name: Load RDS Master credentials
+  ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Read RDS inbound replication status
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "CALL mysql.rds_show_slave_status;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  register: rds_operation_inbound_status
+  changed_when: false
+  no_log: true
+
+- name: Require healthy RDS inbound replication
+  ansible.builtin.assert:
+    that:
+      - rds_operation_inbound_status.stdout is search('Slave_IO_Running:[[:space:]]+Yes')
+      - rds_operation_inbound_status.stdout is search('Slave_SQL_Running:[[:space:]]+Yes')
+      - rds_operation_inbound_status.stdout is search('Seconds_Behind_Master:[[:space:]]+0')
+    fail_msg: "RDS가 On-Prem Source를 따라잡지 못했습니다. Cutover를 진행하지 마세요."
+
+- name: Display sanitized RDS inbound replication status
+  ansible.builtin.debug:
+    msg: "RDS inbound replication healthy: IO=Yes, SQL=Yes, lag=0"

@@ -1,0 +1,27 @@
+---
+# 이 단계는 이미 PoC에서 성공한 On-Prem → RDS 방향이다.
+- name: Require approved GTID position for RDS inbound replication
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_inbound_gtid_position is match('^[0-9]+-[0-9]+-[0-9]+$')
+      - rds_operation_inbound_repl_password | length >= 32
+      - rds_operation_inbound_repl_password is match('^[A-Za-z0-9]+$')
+    fail_msg: "configure-rds-inbound에는 dump와 정확히 일치하는 GTID와 Vault 제공 복제 비밀번호가 필요합니다."
+  no_log: true
+
+- name: Load RDS Master credentials
+  ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Configure RDS as GTID replica of On-Prem primary
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "CALL mysql.rds_set_external_master_gtid('{{ rds_operation_inbound_source_host }}', {{ rds_operation_inbound_source_port | int }}, '{{ rds_operation_inbound_repl_username }}', '$RDS_OPERATION_INBOUND_REPL_PASSWORD', '{{ rds_operation_inbound_gtid_position }}', 0); CALL mysql.rds_start_replication;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+    RDS_OPERATION_INBOUND_REPL_PASSWORD: "{{ rds_operation_inbound_repl_password }}"
+  no_log: true

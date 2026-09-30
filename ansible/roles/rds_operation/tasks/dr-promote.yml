@@ -1,0 +1,40 @@
+---
+- name: Run only on the one nominated DR promotion target
+  ansible.builtin.meta: end_host
+  when: inventory_hostname != rds_operation_dr_promoted_inventory_hostname
+
+- name: Require explicit DR fencing and promotion approval
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_dr_writes_fenced | bool
+      - rds_operation_dr_promotion_approved | bool
+      - rds_operation_dr_promoted_inventory_hostname in groups["onprem_replicas"]
+    fail_msg: >-
+      DR 승격은 RDS/정상 서비스 쓰기 차단 후 execute_mutations,
+      dr_writes_fenced, dr_promotion_approved를 모두 true로 주어야 합니다.
+
+- name: Stop RDS replication and make nominated DR DB writable
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --execute
+      - "STOP SLAVE; SET GLOBAL read_only = OFF;"
+  no_log: true
+
+- name: Record promoted DR database GTID
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --batch
+      - --skip-column-names
+      - --execute
+      - "SELECT @@hostname, @@read_only, @@gtid_current_pos;"
+  register: rds_operation_dr_promotion_status
+  changed_when: false
+
+- name: Display promoted DR database state
+  ansible.builtin.debug:
+    msg: "Promoted {{ inventory_hostname }}. hostname/read_only/GTID: {{ rds_operation_dr_promotion_status.stdout | trim }}"
