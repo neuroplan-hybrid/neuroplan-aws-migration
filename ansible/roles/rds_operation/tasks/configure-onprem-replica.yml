@@ -1,0 +1,51 @@
+---
+- name: Require approved RDS to On-Prem replica configuration
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_outbound_repl_password | length >= 32
+      - rds_operation_outbound_repl_password is match('^[A-Za-z0-9]+$')
+    fail_msg: "configure-onprem-replica에는 승인 플래그와 Vault 제공 복제 비밀번호가 필요합니다."
+  no_log: true
+
+- name: Inspect any existing replica source configuration
+  ansible.builtin.shell: |
+    mariadb --protocol=socket --batch --skip-column-names --execute "SHOW SLAVE STATUS\\G"
+  args:
+    executable: /bin/bash
+  register: rds_operation_existing_slave_status
+  changed_when: false
+
+- name: Reject replacement of an unexpected existing replica source
+  ansible.builtin.assert:
+    that:
+      - >-
+        (rds_operation_existing_slave_status.stdout | trim | length == 0)
+        or (rds_operation_existing_slave_status.stdout is search('Master_Host:[[:space:]]+' ~ rds_operation_endpoint))
+        or (rds_operation_allow_reset_replica | bool)
+    fail_msg: >-
+      이 DB는 다른 Master를 복제 중입니다. 현재 설정을 지우지 않았습니다.
+      정확한 토폴로지 확인 후 rds_operation_allow_reset_replica=true로 명시 승인하세요.
+
+- name: Configure this On-Prem DB as an RDS GTID replica
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mariadb --protocol=socket --execute "STOP SLAVE; RESET SLAVE ALL; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_HOST='{{ rds_operation_endpoint }}', MASTER_PORT={{ rds_operation_port | int }}, MASTER_USER='{{ rds_operation_outbound_repl_username }}', MASTER_PASSWORD='$RDS_OPERATION_OUTBOUND_REPL_PASSWORD', MASTER_CONNECT_RETRY=10, MASTER_USE_GTID=slave_pos, MASTER_DEMOTE_TO_SLAVE=1, MASTER_SSL={{ 1 if rds_operation_replication_use_ssl | bool else 0 }}; START SLAVE;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_OPERATION_OUTBOUND_REPL_PASSWORD: "{{ rds_operation_outbound_repl_password }}"
+  when: >-
+    (rds_operation_existing_slave_status.stdout | trim | length == 0)
+    or not (rds_operation_existing_slave_status.stdout is search('Master_Host:[[:space:]]+' ~ rds_operation_endpoint))
+  no_log: true
+
+- name: Ensure an already-configured RDS replica is read only and started
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --execute
+      - "SET GLOBAL read_only = ON; START SLAVE;"
+  when: rds_operation_existing_slave_status.stdout is search('Master_Host:[[:space:]]+' ~ rds_operation_endpoint)
+  no_log: true

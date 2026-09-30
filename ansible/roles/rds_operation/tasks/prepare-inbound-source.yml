@@ -1,0 +1,21 @@
+---
+- name: Require approved initial inbound-replication account inputs
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_inbound_repl_hosts | length == 2
+      - rds_operation_inbound_repl_password | length >= 32
+      - rds_operation_inbound_repl_password is match('^[A-Za-z0-9]+$')
+    fail_msg: "prepare-inbound-source에는 승인 플래그, RDS DB subnet 2개, 32자 이상 영숫자 비밀번호가 필요합니다."
+  no_log: true
+
+- name: Create least-privilege On-Prem to RDS replication users
+  community.mysql.mysql_user:
+    name: "{{ rds_operation_inbound_repl_username }}"
+    host: "{{ item }}"
+    password: "{{ rds_operation_inbound_repl_password }}"
+    priv: "*.*:REPLICATION SLAVE,REPLICATION CLIENT"
+    state: present
+    login_unix_socket: "{{ rds_operation_socket }}"
+  loop: "{{ rds_operation_inbound_repl_hosts }}"
+  no_log: true

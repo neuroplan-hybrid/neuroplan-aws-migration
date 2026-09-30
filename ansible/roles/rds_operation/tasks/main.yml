@@ -1,0 +1,91 @@
+---
+- name: Validate role context
+  ansible.builtin.assert:
+    that:
+      - rds_operation_node_role in ["controller", "onprem_replica", "cutover_source"]
+    fail_msg: "rds_operation_node_role이 올바르지 않습니다."
+  tags: [always]
+
+- name: Run controller preflight
+  ansible.builtin.import_tasks: controller-preflight.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode == "preflight"
+  tags: [preflight]
+
+- name: Run On-Prem replica preflight
+  ansible.builtin.import_tasks: onprem-preflight.yml
+  when:
+    - rds_operation_node_role == "onprem_replica"
+    - rds_operation_run_mode == "preflight"
+  tags: [preflight]
+
+- name: Prepare RDS as the external replication source
+  ansible.builtin.import_tasks: rds-source.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode == "rds-source"
+  tags: [rds-source]
+
+- name: Import approved initial logical backup into RDS
+  ansible.builtin.import_tasks: seed.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode == "seed"
+  tags: [seed]
+
+- name: Prepare On-Prem source account for initial RDS catch-up
+  ansible.builtin.import_tasks: prepare-inbound-source.yml
+  when:
+    - inventory_hostname in groups["onprem_primary"]
+    - rds_operation_run_mode == "prepare-inbound-source"
+  tags: [prepare-inbound-source]
+
+- name: Configure temporary On-Prem to RDS GTID replication
+  ansible.builtin.import_tasks: configure-rds-inbound.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode == "configure-rds-inbound"
+  tags: [configure-rds-inbound]
+
+- name: Verify temporary RDS inbound replication
+  ansible.builtin.import_tasks: verify-rds-inbound.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode == "verify-rds-inbound"
+  tags: [verify-rds-inbound]
+
+- name: Fence former On-Prem primary for approved cutover
+  ansible.builtin.import_tasks: fence-onprem-primary.yml
+  when:
+    - rds_operation_node_role == "cutover_source"
+    - rds_operation_run_mode == "cutover"
+  tags: [cutover]
+
+- name: Finish approved RDS cutover
+  ansible.builtin.import_tasks: finish-rds-cutover.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode == "cutover"
+  tags: [cutover]
+
+- name: Configure On-Prem node as RDS GTID replica
+  ansible.builtin.import_tasks: configure-onprem-replica.yml
+  when:
+    - rds_operation_node_role == "onprem_replica"
+    - rds_operation_run_mode == "configure-onprem-replica"
+  tags: [configure-onprem-replica]
+
+- name: Verify On-Prem RDS replica
+  ansible.builtin.import_tasks: verify-onprem-replica.yml
+  when:
+    - rds_operation_node_role == "onprem_replica"
+    - rds_operation_run_mode == "verify-onprem-replica"
+  tags: [verify-onprem-replica]
+
+- name: Promote the approved DR replica
+  ansible.builtin.import_tasks: dr-promote.yml
+  when:
+    - rds_operation_node_role == "onprem_replica"
+    - rds_operation_run_mode == "dr-promote"
+  tags: [dr-promote]

@@ -1,0 +1,35 @@
+---
+- name: Require explicit cutover approval and application write fencing
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_application_writes_fenced | bool
+      - rds_operation_cutover_approved | bool
+    fail_msg: >-
+      Cutover는 정상 애플리케이션 쓰기를 먼저 차단하고,
+      execute_mutations/application_writes_fenced/cutover_approved를 모두 true로 줘야 합니다.
+
+- name: Make former On-Prem source read only
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --execute
+      - "SET GLOBAL read_only = ON;"
+  no_log: true
+
+- name: Record final On-Prem source GTID before RDS cutover
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --batch
+      - --skip-column-names
+      - --execute
+      - "SELECT @@gtid_current_pos;"
+  register: rds_operation_cutover_source_gtid
+  changed_when: false
+
+- name: Display final On-Prem source GTID
+  ansible.builtin.debug:
+    msg: "Former On-Prem primary is read_only. Final GTID: {{ rds_operation_cutover_source_gtid.stdout | trim }}"

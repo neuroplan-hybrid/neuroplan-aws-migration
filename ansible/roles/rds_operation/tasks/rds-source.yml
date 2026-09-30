@@ -1,0 +1,59 @@
+---
+- name: Require explicit approval and a safe replication password
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_outbound_repl_hosts | length == 2
+      - rds_operation_outbound_repl_password | length >= 32
+      - rds_operation_outbound_repl_password is match('^[A-Za-z0-9]+$')
+      - rds_operation_binlog_retention_hours | int >= 24
+      - rds_operation_binlog_retention_hours | int <= 720
+    fail_msg: >-
+      rds-source는 승인 플래그, On-Prem DB 2대의 정확한 IP, 32자 이상 영숫자 복제 비밀번호,
+      24~720시간 binlog 보존값이 필요합니다.
+  no_log: true
+
+- name: Load RDS Master credentials
+  ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Configure RDS binlog retention and least-privilege replica users
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" \
+      --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" \
+      --password="$RDS_MASTER_PASSWORD" \
+      --execute "CALL mysql.rds_set_configuration('binlog retention hours', {{ rds_operation_binlog_retention_hours | int }});"
+    {% for host in rds_operation_outbound_repl_hosts %}
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" \
+      --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" \
+      --password="$RDS_MASTER_PASSWORD" \
+      --execute "CREATE USER IF NOT EXISTS '{{ rds_operation_outbound_repl_username }}'@'{{ host }}' IDENTIFIED BY '$RDS_OPERATION_OUTBOUND_REPL_PASSWORD'; ALTER USER '{{ rds_operation_outbound_repl_username }}'@'{{ host }}' IDENTIFIED BY '$RDS_OPERATION_OUTBOUND_REPL_PASSWORD'; GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO '{{ rds_operation_outbound_repl_username }}'@'{{ host }}';"
+    {% endfor %}
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+    RDS_OPERATION_OUTBOUND_REPL_PASSWORD: "{{ rds_operation_outbound_repl_password }}"
+  no_log: true
+
+- name: Read RDS GTID and binary log status
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp --batch --skip-column-names \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "SELECT @@gtid_current_pos; SHOW MASTER STATUS;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  register: rds_operation_source_status
+  changed_when: false
+  no_log: true
+
+- name: Display RDS GTID and binary log status
+  ansible.builtin.debug:
+    var: rds_operation_source_status.stdout_lines

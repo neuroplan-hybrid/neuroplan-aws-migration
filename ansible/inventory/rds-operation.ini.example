@@ -1,0 +1,12 @@
+[rds_controller]
+# DevOps VM: AWS CLI 인증과 RDS 3306 접근이 가능한 실행 위치
+localhost ansible_connection=local
+
+[onprem_primary]
+# 초기 On-Prem → RDS 동기화에서 Source가 되는 DB
+db-primary ansible_host=192.168.44.51 ansible_user=dbadmin
+
+[onprem_replicas]
+# Cutover 이후 RDS의 GTID Replica가 되는 DB들
+db-primary ansible_host=192.168.44.51 ansible_user=dbadmin
+db-replica ansible_host=192.168.44.52 ansible_user=dbadmin

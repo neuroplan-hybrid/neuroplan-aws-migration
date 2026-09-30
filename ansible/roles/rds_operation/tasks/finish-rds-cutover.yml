@@ -1,0 +1,63 @@
+---
+- name: Require explicit cutover approval
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_application_writes_fenced | bool
+      - rds_operation_cutover_approved | bool
+    fail_msg: "RDS cutover 승인 플래그가 부족합니다."
+
+- name: Load RDS Master credentials
+  ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Recheck RDS has caught up before promotion
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --vertical --execute "CALL mysql.rds_show_slave_status;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  register: rds_operation_cutover_status
+  changed_when: false
+  no_log: true
+
+- name: Require zero replication lag at cutover
+  ansible.builtin.assert:
+    that:
+      - rds_operation_cutover_status.stdout is search('Slave_IO_Running:[[:space:]]+Yes')
+      - rds_operation_cutover_status.stdout is search('Slave_SQL_Running:[[:space:]]+Yes')
+      - rds_operation_cutover_status.stdout is search('Seconds_Behind_Master:[[:space:]]+0')
+    fail_msg: "RDS가 Source를 따라잡지 못했습니다. RDS를 Primary로 전환하지 마세요."
+
+- name: Stop and reset RDS inbound replication
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "CALL mysql.rds_stop_replication; CALL mysql.rds_reset_external_master;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  no_log: true
+
+- name: Record RDS GTID as new primary
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp --batch --skip-column-names \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "SELECT @@gtid_current_pos;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  register: rds_operation_new_primary_gtid
+  changed_when: false
+  no_log: true
+
+- name: Display new RDS primary GTID
+  ansible.builtin.debug:
+    msg: "RDS inbound replication reset. RDS is the writable primary at GTID {{ rds_operation_new_primary_gtid.stdout | trim }}."

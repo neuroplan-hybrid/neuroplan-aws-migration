@@ -1,0 +1,18 @@
+---
+- name: Configure the operating RDS as a replication source
+  hosts: rds_controller
+  gather_facts: false
+  vars:
+    rds_operation_node_role: controller
+  roles:
+    - role: rds_operation
+
+- name: Configure On-Prem MariaDB nodes as RDS replicas
+  hosts: onprem_replicas
+  become: true
+  gather_facts: false
+  serial: 1
+  vars:
+    rds_operation_node_role: onprem_replica
+  roles:
+    - role: rds_operation

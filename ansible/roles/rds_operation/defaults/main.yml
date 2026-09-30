@@ -1,0 +1,33 @@
+---
+rds_operation_node_role: ""
+# 기본값은 변경 없는 preflight다. 각 변경 단계는 실행 시 명시한다.
+rds_operation_run_mode: "preflight"
+rds_operation_aws_region: "ap-northeast-2"
+rds_operation_endpoint: ""
+rds_operation_port: 3306
+rds_operation_master_secret_arn: ""
+rds_operation_database: "infraready"
+rds_operation_database_collation: "utf8mb4_uca1400_ai_ci"
+rds_operation_seed_sql_gz: ""
+
+rds_operation_outbound_repl_username: "rds_to_onprem"
+rds_operation_outbound_repl_password: ""
+rds_operation_outbound_repl_hosts: []
+rds_operation_binlog_retention_hours: 168
+rds_operation_replication_use_ssl: false
+
+rds_operation_inbound_source_host: "192.168.44.51"
+rds_operation_inbound_source_port: 3306
+rds_operation_inbound_repl_username: "onprem_to_rds"
+rds_operation_inbound_repl_password: ""
+rds_operation_inbound_repl_hosts: []
+rds_operation_inbound_gtid_position: ""
+
+rds_operation_socket: "/var/lib/mysql/mysql.sock"
+rds_operation_execute_mutations: false
+rds_operation_allow_reset_replica: false
+rds_operation_application_writes_fenced: false
+rds_operation_cutover_approved: false
+rds_operation_dr_writes_fenced: false
+rds_operation_dr_promotion_approved: false
+rds_operation_dr_promoted_inventory_hostname: ""
