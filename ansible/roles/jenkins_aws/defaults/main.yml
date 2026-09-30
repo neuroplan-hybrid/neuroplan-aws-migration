@@ -7,6 +7,9 @@ jenkins_aws_job_name: "neuroplan-aws-ci"
 jenkins_aws_pipeline_script_path: "Jenkinsfile.aws"
 jenkins_aws_poll_scm: "H/2 * * * *"
 
+# Built-in Node에서 Pipeline을 실행하는 실제 OS 계정
+jenkins_aws_runtime_user: "jenkins"
+
 # =========================================================
 # Application Repository
 # =========================================================
@@ -23,7 +26,6 @@ jenkins_app_repo_credential_id: "app-repo-write-credentials"
 # =========================================================
 
 aws_region: "ap-northeast-2"
-aws_account_id: "707191185613"
 
 ecr_frontend_repository: "neuroplan-frontend"
 ecr_backend_repository: "neuroplan-backend"
