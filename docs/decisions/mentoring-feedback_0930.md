@@ -1,6 +1,6 @@
 # 0930 멘토링 피드백 반영 결정안
 
-> - 상태: **논의 중** — PR 코멘트로 합의 → 각 항목 `결정` 칸 채움 → **Merge = 팀 확정**
+> - 상태: **결정 반영** (0930 PR #22 리뷰: 정현 Request changes, 예린 코멘트 → 반영) — 재승인 후 **Merge = 팀 확정**
 > - 대상: 2차 전체 구성도(0928)에 대한 멘토링 피드백 (0930)
 > - 기준 코드: main `dbadcef`
 > - 작성: 희재 / 의견: 희재·예린·정현
@@ -38,7 +38,7 @@
 | C. 부하 기반 DR 검증 | k6 트래픽을 건 상태에서 장애 → RTO·에러율 측정 | F5, F6 |
 | D. 앱 고가용성 | Replica / Probe / RollingUpdate / PDB / PriorityClass / Topology Spread | F6, F7, F11 |
 | E. 시크릿 관리 | HashiCorp Vault + 동적 DB 자격증명 | F8 |
-| F. 비용 최적화 | 워커 스케줄 축소, DB·전송 비용, 생성·삭제 자동화 | F9, F10 |
+| F. 비용 최적화 | DB·전송 비용 반영, 실측, 생성·삭제 자동화 (워커 축소는 후보) | F9, F10 |
 
 ---
 
@@ -59,8 +59,8 @@
 |---|---|
 | 희재안 | 구성도 수정: LB 1개 + "ROSA 관리" 표기, Router 박스 추가, VPC 밖에 "Red Hat 관리 Control Plane (PrivateLink)" 추가, 워커 안에 Router·Monitoring·앱 Pod 표시 |
 | 예린안 | 동일 (Red Hat 관리 영역 → PrivateLink → 우리 VPC Worker Machine Pool → Ingress Controller → App Pods) |
-| 정현 의견 | (대기) |
-| **결정** | |
+| 정현 의견 | 이견 없음 (PR #22 리뷰) |
+| **결정** | **희재안 확정** — LB 1개("ROSA 관리"), Router 박스, Red Hat 관리 Control Plane(PrivateLink) 표시 |
 | 담당 / 기한 | 희재 / 10/1 Go/No-Go 전 |
 
 진입 경로 (ROSA 쪽, 별도 Ingress 추가 없음):
@@ -78,8 +78,9 @@
 | 희재안 | **Route 단위 TLS** (`edge` 종료, `app.<도메인>` Route에 Let's Encrypt 인증서). 기본 IngressController는 건드리지 않음. 자동 갱신(cert-manager Operator + Route 53 DNS-01)은 P2 |
 | 예린안 | `openshift-ingress`의 TLS Secret을 `IngressController.spec.defaultCertificate`로 기본 인증서 교체, 또는 Route 단위 TLS |
 | **쟁점** | 기본 IngressController의 도메인은 `*.apps.<클러스터>.openshiftapps.com` → 우리 도메인 인증서로 기본 인증서를 바꾸면 콘솔·OAuth 등 기본 Route의 인증서가 맞지 않을 수 있음. ROSA에서 기본 IngressController 수정 범위가 제한될 수 있음 → **확인 필요 (5장)** |
-| 정현 의견 | (대기) |
-| **결정** | |
+| 예린 리뷰 | `defaultCertificate` 교체보다 **앱 Route 단위 TLS**에 동의. 기본 IngressController는 유지 |
+| 정현 의견 | 이견 없음 |
+| **결정** | **Route 단위 TLS** — 기본 IngressController는 유지하고, 사용자 도메인 Route(`app.<도메인>`)에만 인증서 적용 |
 | 담당 | 인증서 발급 희재 → Route 적용 예린 |
 
 발표 답변 문구 (합의 후 확정):
@@ -106,8 +107,8 @@
 |---|---|
 | 희재안 | Route 53 중심 유지. **Global Accelerator는 제외** — 같은 리전 안 Active-Passive에 안 맞음(가중치 0 엔드포인트는 fail-open일 때만 트래픽을 받음). 비용은 $0.025/h(12일 약 $7) + 전송 추가 요금으로 크지 않지만 효과가 작음 |
 | 예린안 | On-Prem ↔ ROSA에는 Route 53이 자연스러움. GA는 AWS 멀티리전에 강함 |
-| 정현 의견 | (대기) |
-| **결정** | |
+| 정현 의견 | 이견 없음 |
+| **결정** | **Route 53 = GSLB로 명시, Global Accelerator 제외**. 사이트 표시(`X-Site`) 방법은 정현·예린이 앱 구현과 함께 결정 |
 | 담당 | 희재 (`modules/edge`: DR NLB, Route 53 레코드·헬스체크) |
 
 ### B-2. DR 시연 방향
@@ -118,8 +119,8 @@
 | 예린안 | k6 트래픽 5:5 상태에서 **On-Prem Ingress 장애 → ROSA로 전환**을 Grafana로 보여줌 |
 | **쟁점·보완** | 예린안은 **이관 단계(가중치) 시연으로 채택 가능**. 단 이관 단계의 DB Writer는 온프렘 하나(ROSA 앱도 VPN으로 MaxScale 사용) → 장애 범위를 **온프렘 진입 경로(HAProxy/NGF)로 한정**해야 함. 온프렘 전체가 죽으면 ROSA 앱도 DB를 잃음 |
 | 제안 | ① 이관 단계: 5:5 + 온프렘 진입 장애 → ROSA 흡수 (보조 시연) ② 운영 단계: ROSA 장애 → 온프렘 DR (T6, 핵심) |
-| 정현 의견 | (대기 — DB Writer 관점 확인) |
-| **결정** | |
+| 정현 의견 | 핵심 T6 = 운영 전환 후 ROSA Primary 장애 → 온프렘 DR. 전제는 RDS → 온프렘 db-primary·db-replica 복제와 GTID 동기화 정상. 이관 단계는 Writer가 온프렘 MaxScale이라 온프렘 전체 장애 시 ROSA Backend도 DB 연결을 잃음 |
+| **결정** | **핵심 T6 = ROSA Primary 장애 → 온프렘 DR** (전제: RDS → 온프렘 복제·GTID 정상). **이관 단계 보조 시연은 온프렘 진입 경로(NGF/HAProxy 또는 DR NLB 경로) 장애 → ROSA 흡수로만 한정** |
 
 온프렘 쪽 경로는 반드시 DR NLB를 거침 (온프렘은 공인 IP 없음):
 ```
@@ -138,8 +139,8 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 |---|---|
 | 희재안 | **k6로 통일**. `probe.sh`(1초 curl 루프)는 주 증거에서 빼고, **권한 DNS 전환 시각(Control RTO) 기록용 보조**로만 유지 |
 | 예린안 | k6 추천. `curl localhost`·`oc get pods` 수준의 증적은 버림 |
-| 정현 의견 | (대기) |
-| **결정** | |
+| 정현 의견 | k6 대상 트랜잭션 3종 확정 (D 참고) |
+| **결정** | **k6로 통일**, `probe.sh`는 Control RTO 기록 보조 |
 | 담당 | 시나리오·실행 희재, 대상 API 정의 정현 |
 
 **k6 실행 조건**
@@ -164,8 +165,10 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 
 **무중단 대상 (희재·예린 의견 일치)**
 - 정적 페이지가 아니라 **Frontend → Backend API(Java) → DB 읽기·쓰기**까지 실제 트랜잭션
-- 대상 API 후보: 로그인, 문제 조회, 풀이 저장 → **정현이 확정**
-- 기준 예시: failover 구간 에러율 ≤ X%, **롤링 배포 중 에러 0**
+- k6 대상 트랜잭션 (정현 확정): **① 로그인 ② 문제·계획 등 핵심 데이터 조회 ③ 풀이·계획 저장 등 DB 쓰기**. 정확한 HTTP Endpoint와 요청 형식은 Backend 인수인계 코드 확인 후 확정 (정현)
+- 기준 (정현 확정)
+  - **롤링 배포: k6 실패 요청 0**
+  - **장애 전환: 실패 요청 수·에러율·p95/p99·User RTO·마지막 쓰기 ID를 측정해 기록**. DNS 기반 Route 53 전환이므로 장애 구간 오류 0을 사전 보장하지 않고, 실제 측정값을 증적으로 사용
 
 **배포 무중단 (F6 "배포 한 번 해보고 무중단으로 넘어가는 것")**
 - k6 트래픽을 건 상태에서 새 버전 롤링 배포 → 에러 0 증명
@@ -177,15 +180,15 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | 기능 | 쓰임 | 시연 |
 |---|---|---|
 | PDB (`minAvailable: 1`) | drain·업그레이드 같은 **자발적 중단**에서 최소 Pod 수 보장. 노드가 갑자기 죽는 경우는 막지 못함 | T1 워커 drain 중 k6 에러 0 |
-| PriorityClass | 자원이 부족할 때 backend > frontend > 부가 기능 순으로 유지 | 워커 스케줄 축소(F. 비용)와 묶어 시연 |
+| PriorityClass | 자원이 부족할 때 backend > frontend > 부가 기능 순으로 유지 | 낮은 우선순위 부하 Pod로 노드 자원을 채운 뒤 backend가 선점(preemption)으로 유지되는지 확인 (워커 축소는 F에서 제외됨) |
 | Topology Spread / Anti-Affinity | Pod를 AZ·노드에 분산 | 워커 1대 장애 시 영향 범위 축소 |
 
 | | 내용 |
 |---|---|
-| 희재안 | P0: PDB·PriorityClass·Probe·RollingUpdate. PriorityClass는 워커 축소와 한 번에 시연 |
+| 희재안 | P0: PDB·PriorityClass·Probe·RollingUpdate |
 | 예린안 | 위 7가지를 "고가용성을 고려한 OpenShift 앱 설계" 하나의 주제로 묶음 |
-| 정현 의견 | (대기 — 대상 API, graceful shutdown) |
-| **결정** | |
+| 정현 의견 | 대상 트랜잭션 3종·기준 확정 (위) |
+| **결정** | **대상 3종 + 기준(롤링 배포 실패 0 / 장애 전환은 측정값 증적)**, PDB·PriorityClass·Probe·RollingUpdate·Topology Spread는 P0 |
 | 담당 | 매니페스트 예린, 앱 설정·대상 API 정현 |
 
 ### E. Vault (F8)
@@ -196,37 +199,42 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | | 내용 |
 |---|---|
 | 희재안 | 채택하되 **P1**, 범위를 좁힘 |
-| 예린안 | 채택 추천. Kubernetes Secret의 고정 DB 계정 → Vault 동적 자격증명 |
-| 정현 의견 | (대기 — 데이터 영역) |
-| **결정** | |
-| 담당 | (제안) Vault 설치 예린, DB 연동·시연 정현 |
+| 예린안 | 채택 추천. Kubernetes Secret의 고정 DB 계정 → Vault 동적 자격증명. 리뷰: P1 유지 동의, **Vault 설치·연동은 예린**, DB role·권한과 CREATE/DROP USER 복제 검증은 정현과 분담 |
+| 정현 의견 | **P1 별도 PoC**, W2/W3의 RDS 전환·DR 핵심 경로를 막지 않는 조건 |
+| **결정** | **P1 별도 PoC** (RDS 전환·DR 핵심 경로를 막지 않는 조건). 아래 1~5 적용 |
+| 담당 | Vault 설치·연동 **예린** / DB role·권한, 동적 계정 DDL 복제 검증 **정현** |
 
-**우리 구조에서 정해야 할 것 (희재 제기)**
+**적용 조건 (희재 제기 → 정현·예린 리뷰로 확정)**
 1. **DR 의존성**: Vault를 ROSA에 두면 ROSA 장애(T6) 때 Vault도 같이 멈춤 → **온프렘 DR 앱은 정적 계정 유지** (Ansible Vault로 관리). 발표 근거: "DR 경로는 의존성을 줄이기 위해 동적 자격증명을 쓰지 않음"
-2. **적용 시점**: 이관 단계 Writer는 온프렘, Cutover 후 RDS → **Vault 동적 계정은 Cutover 이후 RDS 대상만**
-3. **복제 영향**: RDS에서 만든 동적 계정의 CREATE/DROP USER가 온프렘 Replica로 복제되는지 확인
-4. **커넥션 풀**: 계정 만료 시 Java 커넥션 풀 재연결 → 자격증명 갱신 시 재시작(Vault Secrets Operator `rolloutRestartTargets` 등) 또는 **시연용 role(TTL 15분)과 앱 role 분리**
-5. **Secrets Manager 역할**: RDS Master 비밀번호는 기존대로 Secrets Manager(`manage_master_user_password`). Vault는 그 위에서 앱 계정만 발급
+2. **적용 범위**: 이관 단계 Writer는 온프렘, Cutover 후 RDS → **Cutover 후 RDS에 연결하는 ROSA Backend 앱 DB 계정에만** 적용 검토
+3. **복제 영향**: RDS에서 생성·삭제한 동적 계정 DDL(CREATE/DROP USER)의 온프렘 Replica 전파 여부 → **P1 검증 항목** (정현)
+4. **TTL·커넥션 풀**: **TTL 15분은 시연용 role로 먼저 검증**. 지속 실행되는 Backend 계정은 자격증명 갱신·Connection Pool 재연결 방식(Vault Secrets Operator `rolloutRestartTargets` 등) 확인 후 결정
+5. **Secrets Manager 역할**: RDS Master Secret은 기존대로 Secrets Manager(`manage_master_user_password`). Vault는 그 위에서 앱 계정만 발급
 
 ### F. 비용 최적화 (F9, F10)
 
 **전제 (희재·예린 의견 일치)**
 - ROSA HCP는 **클러스터 요금 $0.25/h를 멈출 수 없음**. 워커 EC2를 콘솔에서 직접 끄는 방식은 쓰지 않음
-- 멈출 수 있는 건 **워커 수** → 머신풀 replicas 조정
+- 워커 수 조정은 머신풀 replicas로만 가능. 단, 현재 Terraform의 기본 머신풀은 **3AZ 구성**
 - "껐다 켜도 문제없다"는 **워커·Pod 수준에서 맞음**. 클러스터 삭제·재생성은 여전히 위험 → 프로젝트 제약 문구를 이 기준으로 구분
 
-**워커 스케줄 축소 (3 → 2대)**
-- 효과 추정: 1대당 약 $0.41/h (EC2 약 $0.24 + ROSA 서비스 $0.171, 인스턴스 타입 확정 전 추정) × 야간(평일 8일 × 15h) + 연휴·주말(4일 × 24h) = 216h → **약 $90 절감**
-- 연휴(10/9~11)·10/17은 온프렘도 OFF라 트래픽 시연 없음
+**워커 스케줄 축소 — 초안(3 → 2대, 약 $90 절감)은 철회**
+- 초안: 야간·연휴에 3 → 2대로 줄여 약 $90 절감 (1대당 약 $0.41/h × 216h 추정)
+- 철회 이유 (리뷰): ① 기본 머신풀이 3AZ라 단순 3 → 2 축소는 AZ 분산을 깸 ② 워커 replicas를 Terraform이 관리 → 스케줄 조정 시 **state 드리프트** ③ PDB·부하·분산 배치 검증이 먼저
 
 | | 내용 |
 |---|---|
-| 희재안 | P0. 야간·연휴 3 → 2대, 시연일은 3대 |
-| 예린안 | Terraform 생성·삭제, 워커 최소화, Autoscaling, Spot 머신풀(필요 시), RDS·NAT·LB 정리, Budgets·Cost Explorer |
-| **쟁점** | ① 워커 replicas는 Terraform(`rosa_replicas`)이 관리 → 스케줄로 바꾸면 **state와 드리프트** → plan 전에 원복하는 규칙 또는 Autoscaling(min/max) 방식 중 선택 ② 3AZ 머신풀에서 3 → 2대면 한 AZ가 0대가 됨 → 허용 여부 ③ HCP에서 Spot 머신풀 지원 여부 |
-| 정현 의견 | (대기) |
-| **결정** | |
+| 희재안 (초안) | P0. 야간·연휴 3 → 2대, 시연일은 3대 → **리뷰 반영해 철회** |
+| 예린안 | Terraform 생성·삭제, 워커 최소화, RDS·NAT·LB 정리, Budgets·Cost Explorer. 리뷰: **기본 3AZ Worker 3대 유지**, Scheduled Scaling이 필요하면 **별도 Machine Pool/Autoscaling 구조로 검토**, **Spot Machine Pool 제외** |
+| 정현 의견 | 워커 축소는 P0가 아니라 **P1 또는 비용 절감 후보**. 10/6~시연 기간은 3대 유지, 부하·PDB·분산 배치 검증 후 여유가 있을 때만 별도 Plan·승인으로 결정 |
+| **결정** | **기본 3AZ 워커 3대 유지** (10/6~시연 기간). 스케줄 축소는 **P1 후보** — 필요하면 별도 Machine Pool/Autoscaling 구조로 검토하고 별도 Plan·승인. **Spot 제외** |
 | 담당 | 예린 (지정 실행자 규칙과 함께) |
+
+**비용 최적화 P0 (워커 축소 대신)**
+- 비용표에 DB·전송 비용 반영 (아래)
+- **10/7 Cost Explorer 하루치 실측** → 남은 기간 추정 (기존 계획)
+- 종료 시 Terraform destroy + 잔존 리소스 확인 (기존 계획)
+- 발표: 이미 반영한 설계 결정(NAT 1개, S3 Gateway Endpoint, Resolver 제외, RDS 평소 Single-AZ, GA 제외)을 **비용 근거와 실측값**으로 정리
 
 **DB·전송 비용 (F10)** — 비용표에 추가
 | 항목 | 내용 |
@@ -244,27 +252,28 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 
 | # | 항목 | 우선순위 | 담당 | 기한 | 결정 |
 |---|---|---|---|---|---|
-| A | 구성도 수정 (HCP 구조, LB 1개, Router) | P0 | 희재 | 10/1 | |
-| A-2 | 인증서: Route 단위 TLS | P0 | 희재 → 예린 | 도메인 확정 후 | |
-| B | Route 53 = GSLB 명시, 5:5 검증 설계 | P0 | 희재 | 10/6~8 | |
-| B-2 | DR 시연: 핵심 T6 + 이관 단계 보조 시연 | P0 | 희재·정현 | 10/12~14 | |
-| C | k6 도입, probe.sh는 보조 | P0 | 희재 (API 정현) | 10/6 전 초안 | |
-| D | 무중단 대상 API·기준, 배포 무중단, PDB·PriorityClass | P0 | 예린·정현 | 10/6 전 | |
-| E | Vault 동적 자격증명 (Cutover 후 RDS, DR은 정적 계정) | P1 | 예린·정현 | ROSA 기간 | |
-| F | 워커 스케줄 축소, DB·전송 비용 반영 | P0 | 예린 (비용표 예린·희재) | 10/6 | |
+| A | 구성도 수정 (HCP 구조, LB 1개, Router) | P0 | 희재 | 10/1 | ✅ 확정 |
+| A-2 | 인증서: Route 단위 TLS, 기본 IngressController 유지 | P0 | 희재 → 예린 | 도메인 확정 후 | ✅ 확정 |
+| B | Route 53 = GSLB 명시, 5:5 검증 설계, GA 제외 | P0 | 희재 | 10/6~8 | ✅ 확정 |
+| B-2 | DR 시연: 핵심 T6 + 이관 단계는 진입 경로 장애만 | P0 | 희재·정현 | 10/12~14 | ✅ 확정 |
+| C | k6 도입, probe.sh는 보조 | P0 | 희재 (Endpoint 정현) | 10/6 전 초안 | ✅ 확정 |
+| D | 대상 3종·기준, 배포 무중단, PDB·PriorityClass | P0 | 예린·정현 | 10/6 전 | ✅ 확정 |
+| E | Vault 별도 PoC (Cutover 후 ROSA Backend 앱 계정, DR은 정적 계정) | P1 | 설치·연동 예린 / DB role·복제 검증 정현 | ROSA 기간 | ✅ 확정 |
+| F | DB·전송 비용 반영, 10/7 실측, 종료 destroy | P0 | 비용표 예린·희재 | 10/7 | ✅ 확정 |
+| F-2 | 워커 스케줄 축소 (별도 Machine Pool/Autoscaling) | P1 후보 | 예린 | 검증 후 | 3대 유지, 별도 Plan·승인 |
 | — | cert-manager 자동 갱신 | P2 | 예린 | — | |
 
 ## 5. 확인 필요 (사실 확인)
 
-| # | 확인할 것 | 담당 |
-|---|---|---|
-| 1 | ROSA HCP 기본 IngressController의 LB 종류, 기본 인증서 교체 가능 범위 | 예린 |
-| 2 | 3AZ 머신풀에서 한 AZ를 0대로 줄일 수 있는지 (HCP 최소 워커 2대) | 예린 |
-| 3 | HCP Spot 머신풀 지원 여부 | 예린 |
-| 4 | 머신풀 수동 조정 시 Terraform 드리프트 처리 방식 | 예린 |
-| 5 | Vault 동적 계정의 CREATE/DROP USER가 온프렘 Replica로 복제되는지 | 정현 |
-| 6 | 응답에 사이트 표시(`X-Site`) 방법 — Route·NGF 헤더 설정 또는 앱 | 예린·정현 |
-| 7 | VPN·AZ 간 전송 단가 (서울) → 비용표 | 희재 |
+| # | 확인할 것 | 담당 | 상태 (0930 리뷰) |
+|---|---|---|---|
+| 1 | ROSA HCP 기본 IngressController의 LB 종류, 기본 인증서 교체 가능 범위 | 예린 | Route 단위 TLS로 결정 → LB 종류만 확인 |
+| 2 | 3AZ 머신풀에서 한 AZ를 0대로 줄일 수 있는지 (HCP 최소 워커 2대) | 예린 | 3 → 2 축소 미적용으로 결정 |
+| 3 | HCP Spot 머신풀 지원 여부 | 예린 | Spot 제외로 결정 |
+| 4 | 머신풀 수동 조정 시 Terraform 드리프트 처리 방식 | 예린 | F-2 검토 시 별도 구조로 |
+| 5 | Vault 동적 계정의 CREATE/DROP USER가 온프렘 Replica로 복제되는지 | 정현 | P1 검증 항목 |
+| 6 | 응답에 사이트 표시(`X-Site`) 방법 — Route·NGF 헤더 설정 또는 앱 | 정현·예린 | 앱 구현 방식과 함께 결정 |
+| 7 | VPN·AZ 간 전송 단가 (서울) → 비용표 | 희재 | |
 
 ## 6. 계획서 기준(시나리오 v2.4) vs 변경안
 
@@ -277,8 +286,8 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | 인증서 | Router·NGF에 같은 인증서 | 동일 + **Route 단위 TLS** 명시, 별도 Ingress 없음 |
 | 시크릿 | Secrets Manager | Secrets Manager(Master) + **Vault 동적 계정(P1)** |
 | 앱 HA | HPA/PDB | + **PriorityClass, startupProbe, Topology Spread** |
-| 비용 | ROSA 12일 상시 3대 | **야간·연휴 2대** (약 $90 절감), DB·전송 비용 반영 |
-| ROSA 제약 해석 | "껐다 켜면 문제" | **클러스터 재생성은 금지, 워커 수 조정은 허용** |
+| 비용 | ROSA 12일 상시 3대 | **3대 유지** + DB·전송 비용 반영, 10/7 실측. 스케줄 축소는 P1 후보(별도 Machine Pool/Autoscaling) |
+| ROSA 제약 해석 | "껐다 켜면 문제" | **클러스터 재생성은 금지**. 워커 수 조정은 별도 구조·Plan·승인이 있을 때만 |
 
 ## 7. 참고
 
