@@ -17,7 +17,8 @@
 #   3) policy aws-to-dmz (없을 때만 생성): aws-vpn → nw-dmz, target DROP,
 #      DR NLB Public 서브넷 3개(10.20.0.0/24, 10.20.1.0/24, 10.20.2.0/24) → 192.168.24.100:443/tcp만
 #   4) 2~3에서 생성했으면 firewall-cmd --reload (전후 ESP 수 출력)
-#   5) NM 프로필 dmz (없을 때만 생성): ens161, 192.168.24.62/24, 게이트웨이 없음, never-default, zone nw-dmz → con up
+#   5) NM 프로필 dmz (없을 때만 생성): ens161, 192.168.24.62/24(manual), 게이트웨이 없음, never-default, zone nw-dmz,
+#      autoconnect yes, ignore-auto-dns yes, ipv6 disabled → con up
 #      (zone을 먼저 만드는 이유: zone 없이 IP를 올리면 기본 zone public(ssh 허용)에 들어감)
 # lb1·lb2 — 하는 일
 #   1) 전제 확인: DMZ NIC(ens192) 24.x 주소, Infra DMZ(192.168.24.62) ping
@@ -96,7 +97,7 @@ policy_diff() {
     v="$(fwp --policy="$POLICY" --list-rich-rules | sort)"
     [[ "$v" == "$POLICY_RULES" ]] || echo "rich rules 불일치: [${v//$'\n'/ | }] (기대 ${NLB_SRCS// /, } → ${VIP}:443 3개)"
 }
-# 기존 NM 프로필이 기대값과 같은지 (읽기 전용)
+# 기존 NM 프로필이 기대값과 같은지 (읽기 전용) — [5] nmcli con add에서 설정하는 값과 같은 기준
 conn_diff() {
     local v
     v="$(nmcli -g connection.interface-name con show "$CONN")"; [[ "$v" == "$INFRA_DMZ_NIC" ]]      || echo "ifname ${v} (기대 ${INFRA_DMZ_NIC})"
@@ -104,6 +105,10 @@ conn_diff() {
     v="$(nmcli -g connection.zone con show "$CONN")";           [[ "$v" == "$ZONE" ]]               || echo "zone ${v} (기대 ${ZONE})"
     v="$(nmcli -g ipv4.gateway con show "$CONN")";              [[ -z "$v" ]]                       || echo "gateway ${v} (기대 없음)"
     v="$(nmcli -g ipv4.never-default con show "$CONN")";        [[ "$v" == "yes" ]]                 || echo "never-default ${v} (기대 yes)"
+    v="$(nmcli -g connection.autoconnect con show "$CONN")";    [[ "$v" == "yes" ]]                 || echo "autoconnect ${v} (기대 yes, 부팅 시 자동 활성)"
+    v="$(nmcli -g ipv4.method con show "$CONN")";               [[ "$v" == "manual" ]]              || echo "ipv4.method ${v} (기대 manual)"
+    v="$(nmcli -g ipv4.ignore-auto-dns con show "$CONN")";      [[ "$v" == "yes" ]]                 || echo "ignore-auto-dns ${v} (기대 yes)"
+    v="$(nmcli -g ipv6.method con show "$CONN")";               [[ "$v" == "disabled" ]]            || echo "ipv6.method ${v} (기대 disabled)"
 }
 
 setup_infra() {

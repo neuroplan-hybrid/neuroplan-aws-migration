@@ -64,6 +64,12 @@ check_infra() {
     if [[ "$ac" == "yes" ]]; then ok "autoconnect yes (부팅 시 자동)"; else ng "autoconnect '${ac}'"; fi
     if [[ "$nd" == "yes" && -z "$gw" ]]; then ok "게이트웨이 없음·never-default"; else ng "gw '${gw}' never-default '${nd}'"; fi
     if [[ "$z" == "$ZONE" ]]; then ok "connection.zone ${ZONE}"; else ng "connection.zone '${z}' (기대 ${ZONE})"; fi
+    local m4 ad m6
+    m4="$(nmcli -g ipv4.method con show "$CONN" 2>/dev/null || true)"
+    ad="$(nmcli -g ipv4.ignore-auto-dns con show "$CONN" 2>/dev/null || true)"
+    m6="$(nmcli -g ipv6.method con show "$CONN" 2>/dev/null || true)"
+    if [[ "$m4" == "manual" && "$ad" == "yes" && "$m6" == "disabled" ]]; then ok "ipv4 manual·ignore-auto-dns·ipv6 disabled"
+    else ng "ipv4.method '${m4}' ignore-auto-dns '${ad}' ipv6.method '${m6}' (기대 manual/yes/disabled)"; fi
 
     echo "[firewalld]"
     z="$(firewall-cmd --get-zone-of-interface="$INFRA_DMZ_NIC" 2>/dev/null || echo none)"
