@@ -7,5 +7,82 @@
     - ../group_vars/all.yml
     - ../group_vars/vault.yml
 
+  pre_tasks:
+    # Jenkins용 AWS Credential은 DevOps VM에서 실제로 사용하는 AWS CLI
+    # shared credentials를 기준으로 동기화한다.
+    # 비밀값은 메모리에서만 사용하며 로그/Git/vault.yml에는 기록하지 않는다.
+    - name: Read active AWS access key from controller CLI configuration
+      ansible.builtin.command:
+        argv:
+          - aws
+          - configure
+          - get
+          - aws_access_key_id
+      register: jenkins_aws_cli_access_key
+      changed_when: false
+      check_mode: false
+      no_log: true
+      become: false
+
+    - name: Read active AWS secret key from controller CLI configuration
+      ansible.builtin.command:
+        argv:
+          - aws
+          - configure
+          - get
+          - aws_secret_access_key
+      register: jenkins_aws_cli_secret_key
+      changed_when: false
+      check_mode: false
+      no_log: true
+      become: false
+
+    - name: Validate active AWS CLI credential values
+      ansible.builtin.assert:
+        that:
+          - (jenkins_aws_cli_access_key.stdout | default('') | trim | length) > 0
+          - (jenkins_aws_cli_secret_key.stdout | default('') | trim | length) > 0
+        fail_msg: >-
+          AWS CLI shared credentials are missing on the Ansible controller.
+          Configure a valid access key and secret key before running this playbook.
+      no_log: true
+
+    - name: Validate active AWS CLI credentials with STS
+      ansible.builtin.command:
+        argv:
+          - aws
+          - sts
+          - get-caller-identity
+          - --query
+          - Account
+          - --output
+          - text
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ jenkins_aws_cli_access_key.stdout | trim }}"
+        AWS_SECRET_ACCESS_KEY: "{{ jenkins_aws_cli_secret_key.stdout | trim }}"
+        AWS_REGION: "{{ aws_region }}"
+        AWS_DEFAULT_REGION: "{{ aws_region }}"
+      register: jenkins_aws_cli_identity
+      changed_when: false
+      check_mode: false
+      no_log: true
+      become: false
+
+    - name: Validate AWS account returned by STS
+      ansible.builtin.assert:
+        that:
+          - (jenkins_aws_cli_identity.stdout | default('') | trim) is match('^[0-9]{12}$')
+        fail_msg: "Active AWS CLI credentials did not return a valid 12-digit AWS account ID."
+      changed_when: false
+
+    # 기존 role이 사용하는 변수명에 런타임 값을 덮어써서
+    # Jenkins의 jenkins-ecr-aws Credential을 현재 AWS CLI 키와 동기화한다.
+    - name: Set Jenkins AWS credential values from active CLI configuration
+      ansible.builtin.set_fact:
+        vault_jenkins_aws_access_key_id: "{{ jenkins_aws_cli_access_key.stdout | trim }}"
+        vault_jenkins_aws_secret_access_key: "{{ jenkins_aws_cli_secret_key.stdout | trim }}"
+      no_log: true
+      changed_when: false
+
   roles:
     - role: jenkins_aws
