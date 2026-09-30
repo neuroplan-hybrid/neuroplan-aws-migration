@@ -23,7 +23,6 @@ jenkins_app_repo_credential_id: "app-repo-write-credentials"
 # =========================================================
 
 aws_region: "ap-northeast-2"
-aws_account_id: "707191185613"
 
 ecr_frontend_repository: "neuroplan-frontend"
 ecr_backend_repository: "neuroplan-backend"
