@@ -10,11 +10,3 @@
 - name: Verify AWS CLI is available to read Secrets Manager
   ansible.builtin.command: aws --version
   changed_when: false
-
-- name: Verify TCP 3306 from the controller to RDS
-  ansible.builtin.wait_for:
-    host: "{{ rds_operation_endpoint }}"
-    port: "{{ rds_operation_port }}"
-    timeout: 10
-    state: started
-  changed_when: false

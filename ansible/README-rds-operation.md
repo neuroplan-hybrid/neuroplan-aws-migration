@@ -37,7 +37,7 @@ DevOps VM에서 `aws secretsmanager get-secret-value`를 실행할 AWS 인증도
 ## 실행 단계
 
 ```bash
-# 0. 변경 없는 연결·MariaDB 전제 조건 점검
+# 0. 변경 없는 RDS 입력값·MariaDB GTID 전제 조건 점검
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml --tags preflight
 
 # 1. RDS에 복제 계정·binlog 보존 설정, 논리 덤프 Import

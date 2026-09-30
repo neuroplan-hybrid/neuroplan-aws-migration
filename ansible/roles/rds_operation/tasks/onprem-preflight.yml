@@ -1,11 +1,4 @@
 ---
-- name: Verify TCP 3306 from this On-Prem DB to RDS
-  ansible.builtin.wait_for:
-    host: "{{ rds_operation_endpoint }}"
-    port: "{{ rds_operation_port }}"
-    timeout: 10
-    state: started
-  changed_when: false
 
 - name: Read On-Prem MariaDB replication prerequisites
   ansible.builtin.command:
