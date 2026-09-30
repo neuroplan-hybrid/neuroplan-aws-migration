@@ -1,0 +1,344 @@
+---
+# =========================================================
+# NeuroPlan ROSA OpenShift GitOps bootstrap
+#
+# Ansible:
+#   - OpenShift GitOps Operator 설치
+#   - 전용 Argo CD 인스턴스 생성
+#   - GitOps Repository Credential 등록
+#   - Argo CD Application 생성
+#
+# Argo CD:
+#   - neuroplan-gitops/overlays/rosa 지속 동기화
+# =========================================================
+
+
+# ---------------------------------------------------------
+# 변수 검증
+# ---------------------------------------------------------
+
+- name: Validate ROSA GitOps variables
+  ansible.builtin.assert:
+    that:
+      - (rosa_gitops_operator_namespace | length) > 0
+      - (rosa_gitops_operator_channel | length) > 0
+      - (rosa_gitops_namespace | length) > 0
+      - (rosa_gitops_instance_name | length) > 0
+      - (rosa_gitops_target_namespace | length) > 0
+      - (rosa_gitops_repository_url | length) > 0
+      - (rosa_gitops_repository_revision | length) > 0
+      - (rosa_gitops_repository_path | length) > 0
+      - (rosa_gitops_application_name | length) > 0
+      - >
+        (not (rosa_gitops_application_enabled | bool))
+        or
+        ((rosa_gitops_repository_private_key | trim | length) > 0)
+    fail_msg: "Required ROSA GitOps variables are missing."
+  no_log: true
+
+
+# ---------------------------------------------------------
+# Manifest 사전 렌더링 / YAML 검증
+# ---------------------------------------------------------
+
+- name: Render ROSA GitOps operator manifest
+  ansible.builtin.set_fact:
+    rosa_gitops_operator_manifest: >-
+      {{
+        lookup(
+          'ansible.builtin.template',
+          'operator-install.yaml.j2'
+        )
+      }}
+  changed_when: false
+
+- name: Render dedicated Argo CD instance manifest
+  ansible.builtin.set_fact:
+    rosa_gitops_instance_manifest: >-
+      {{
+        lookup(
+          'ansible.builtin.template',
+          'argocd-instance.yaml.j2'
+        )
+      }}
+  changed_when: false
+
+- name: Validate non-secret ROSA GitOps YAML
+  ansible.builtin.set_fact:
+    rosa_gitops_operator_documents: >-
+      {{ rosa_gitops_operator_manifest | from_yaml_all | list }}
+    rosa_gitops_instance_documents: >-
+      {{ rosa_gitops_instance_manifest | from_yaml_all | list }}
+  changed_when: false
+
+- name: Render Argo CD repository and Application manifests
+  ansible.builtin.set_fact:
+    rosa_gitops_repository_manifest: >-
+      {{
+        lookup(
+          'ansible.builtin.template',
+          'repository-secret.yaml.j2'
+        )
+      }}
+    rosa_gitops_application_manifest: >-
+      {{
+        lookup(
+          'ansible.builtin.template',
+          'application.yaml.j2'
+        )
+      }}
+  no_log: true
+  changed_when: false
+  when: rosa_gitops_application_enabled | bool
+
+- name: Validate Argo CD repository and Application YAML
+  ansible.builtin.set_fact:
+    rosa_gitops_repository_documents: >-
+      {{ rosa_gitops_repository_manifest | from_yaml_all | list }}
+    rosa_gitops_application_documents: >-
+      {{ rosa_gitops_application_manifest | from_yaml_all | list }}
+  no_log: true
+  changed_when: false
+  when: rosa_gitops_application_enabled | bool
+
+
+# ---------------------------------------------------------
+# Check Mode
+# ---------------------------------------------------------
+
+- name: Show ROSA GitOps check-mode plan
+  ansible.builtin.debug:
+    msg:
+      - "OpenShift GitOps Operator will be installed."
+      - "Dedicated Argo CD namespace: {{ rosa_gitops_namespace }}"
+      - "Target namespace: {{ rosa_gitops_target_namespace }}"
+      - "Application enabled: {{ rosa_gitops_application_enabled }}"
+      - "No ROSA resources are changed in Ansible check mode."
+  when: ansible_check_mode
+
+
+# =========================================================
+# 아래부터 실제 ROSA 연결이 있을 때만 수행
+# =========================================================
+
+- name: Check OpenShift CLI
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -lc
+      - command -v oc
+  register: rosa_gitops_oc_check
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify OpenShift login
+  ansible.builtin.command:
+    argv:
+      - oc
+      - whoami
+  register: rosa_gitops_oc_user
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Show connected OpenShift API
+  ansible.builtin.command:
+    argv:
+      - oc
+      - whoami
+      - --show-server
+  register: rosa_gitops_oc_server
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Verify permission to create namespaces
+  ansible.builtin.command:
+    argv:
+      - oc
+      - auth
+      - can-i
+      - create
+      - namespaces
+  register: rosa_gitops_can_create_namespace
+  changed_when: false
+  failed_when: rosa_gitops_can_create_namespace.stdout | trim != "yes"
+  when: not ansible_check_mode
+
+- name: Apply Red Hat OpenShift GitOps Operator resources
+  ansible.builtin.command:
+    argv:
+      - oc
+      - apply
+      - -f
+      - -
+    stdin: "{{ rosa_gitops_operator_manifest }}"
+  register: rosa_gitops_operator_apply
+  changed_when: >
+    ('created' in rosa_gitops_operator_apply.stdout)
+    or
+    ('configured' in rosa_gitops_operator_apply.stdout)
+  when: not ansible_check_mode
+
+- name: Wait for Argo CD CRD
+  ansible.builtin.command:
+    argv:
+      - oc
+      - get
+      - crd
+      - argocds.argoproj.io
+  register: rosa_gitops_argocd_crd
+  changed_when: false
+  until: rosa_gitops_argocd_crd.rc == 0
+  retries: 120
+  delay: 5
+  when: not ansible_check_mode
+
+- name: Wait for Argo CD CRD to become established
+  ansible.builtin.command:
+    argv:
+      - oc
+      - wait
+      - --for=condition=Established
+      - crd/argocds.argoproj.io
+      - "--timeout={{ rosa_gitops_wait_timeout }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Apply dedicated NeuroPlan Argo CD instance
+  ansible.builtin.command:
+    argv:
+      - oc
+      - apply
+      - -f
+      - -
+    stdin: "{{ rosa_gitops_instance_manifest }}"
+  register: rosa_gitops_instance_apply
+  changed_when: >
+    ('created' in rosa_gitops_instance_apply.stdout)
+    or
+    ('configured' in rosa_gitops_instance_apply.stdout)
+  until: rosa_gitops_instance_apply.rc == 0
+  retries: 12
+  delay: 5
+  when: not ansible_check_mode
+
+- name: Wait for NeuroPlan Argo CD server deployment
+  ansible.builtin.command:
+    argv:
+      - oc
+      - get
+      - "deployment/{{ rosa_gitops_instance_name }}-server"
+      - -n
+      - "{{ rosa_gitops_namespace }}"
+  register: rosa_gitops_server_deployment
+  changed_when: false
+  until: rosa_gitops_server_deployment.rc == 0
+  retries: 120
+  delay: 5
+  when: not ansible_check_mode
+
+- name: Wait for NeuroPlan Argo CD server rollout
+  ansible.builtin.command:
+    argv:
+      - oc
+      - rollout
+      - status
+      - "deployment/{{ rosa_gitops_instance_name }}-server"
+      - -n
+      - "{{ rosa_gitops_namespace }}"
+      - "--timeout={{ rosa_gitops_wait_timeout }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Wait for NeuroPlan Argo CD repo-server rollout
+  ansible.builtin.command:
+    argv:
+      - oc
+      - rollout
+      - status
+      - "deployment/{{ rosa_gitops_instance_name }}-repo-server"
+      - -n
+      - "{{ rosa_gitops_namespace }}"
+      - "--timeout={{ rosa_gitops_wait_timeout }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Wait for NeuroPlan Argo CD application-controller rollout
+  ansible.builtin.command:
+    argv:
+      - oc
+      - rollout
+      - status
+      - "statefulset/{{ rosa_gitops_instance_name }}-application-controller"
+      - -n
+      - "{{ rosa_gitops_namespace }}"
+      - "--timeout={{ rosa_gitops_wait_timeout }}"
+  changed_when: false
+  when: not ansible_check_mode
+
+
+# =========================================================
+# Repository + Application
+#
+# 실제 RDS Endpoint / Route Host 반영 후에만 활성화
+# =========================================================
+
+- name: Configure private GitOps repository credential
+  ansible.builtin.command:
+    argv:
+      - oc
+      - apply
+      - -f
+      - -
+    stdin: "{{ rosa_gitops_repository_manifest }}"
+  register: rosa_gitops_repository_apply
+  changed_when: >
+    ('created' in rosa_gitops_repository_apply.stdout)
+    or
+    ('configured' in rosa_gitops_repository_apply.stdout)
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - rosa_gitops_application_enabled | bool
+
+- name: Apply NeuroPlan ROSA Argo CD Application
+  ansible.builtin.command:
+    argv:
+      - oc
+      - apply
+      - -f
+      - -
+    stdin: "{{ rosa_gitops_application_manifest }}"
+  register: rosa_gitops_application_apply
+  changed_when: >
+    ('created' in rosa_gitops_application_apply.stdout)
+    or
+    ('configured' in rosa_gitops_application_apply.stdout)
+  when:
+    - not ansible_check_mode
+    - rosa_gitops_application_enabled | bool
+
+- name: Show NeuroPlan ROSA Argo CD Application
+  ansible.builtin.command:
+    argv:
+      - oc
+      - get
+      - application
+      - "{{ rosa_gitops_application_name }}"
+      - -n
+      - "{{ rosa_gitops_namespace }}"
+  register: rosa_gitops_application_status
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - rosa_gitops_application_enabled | bool
+
+- name: Explain deferred Application creation
+  ansible.builtin.debug:
+    msg: >-
+      Argo CD Application creation is intentionally disabled.
+      After the ROSA Route host and RDS endpoint are reflected in
+      overlays/rosa, rerun with
+      -e rosa_gitops_application_enabled=true.
+  when:
+    - not ansible_check_mode
+    - not (rosa_gitops_application_enabled | bool)

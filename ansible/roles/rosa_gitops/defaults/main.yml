@@ -1,0 +1,46 @@
+---
+# =========================================================
+# Red Hat OpenShift GitOps Operator
+# =========================================================
+
+rosa_gitops_operator_namespace: "openshift-gitops-operator"
+rosa_gitops_operator_channel: "latest"
+
+# =========================================================
+# Dedicated Argo CD instance
+# =========================================================
+
+rosa_gitops_namespace: "neuroplan-gitops"
+rosa_gitops_instance_name: "neuroplan"
+
+# Argo CD가 실제 애플리케이션을 배포할 namespace
+rosa_gitops_target_namespace: "neuroplan"
+
+# =========================================================
+# GitOps repository
+# =========================================================
+
+rosa_gitops_repository_url: "git@github.com:neuroplan-hybrid/neuroplan-gitops.git"
+rosa_gitops_repository_revision: "main"
+rosa_gitops_repository_path: "overlays/rosa"
+rosa_gitops_repository_secret_name: "neuroplan-gitops-repo"
+
+# 기존 Jenkins GitOps SSH Key를 Vault에서 재사용
+rosa_gitops_repository_private_key: >-
+  {{ vault_jenkins_gitops_private_key | default('') }}
+
+# =========================================================
+# Argo CD Application
+# =========================================================
+
+rosa_gitops_application_name: "neuroplan-rosa"
+rosa_gitops_destination_server: "https://kubernetes.default.svc"
+
+# 안전장치:
+# RDS Endpoint / Route Host 등 실제 값 반영 전에는 Application 생성 금지
+rosa_gitops_application_enabled: false
+
+# Application을 생성할 때는 자동 Sync 사용
+rosa_gitops_automated_sync: true
+
+rosa_gitops_wait_timeout: "600s"
