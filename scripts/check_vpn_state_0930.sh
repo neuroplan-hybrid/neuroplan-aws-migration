@@ -2,8 +2,10 @@
 # check_vpn_state_0930.sh — Infra VM VPN 자동 복구 상태 점검 (읽기 전용, 작업일지 0930 9장)
 #
 # 실행 위치: Infra VM (root). 10/6·10/12 아침 부팅 후, 재부팅 검증 후 사용
-#   bash check_vpn_state_0930.sh          # 온프렘만
-#   bash check_vpn_state_0930.sh --aws    # + VGW 텔레메트리 (AWS CLI, ap-northeast-2)
+#   bash check_vpn_state_0930.sh                  # 온프렘만
+#   bash check_vpn_state_0930.sh --aws <vpn-id>   # + 해당 VPN Connection 텔레메트리 (AWS CLI, ap-northeast-2)
+#     <vpn-id>: Terraform output vpn_connection_id (예: vpn-0123456789abcdef0)
+#     - 텔레메트리 Outside IP 2개가 aws.conf aws-tun1/aws-tun2의 right=와 같은지도 대조
 # 종료 코드: 0 = 전부 OK, 1 = FAIL 1개 이상 (preflight에서 그대로 사용)
 set -uo pipefail
 
@@ -19,6 +21,20 @@ expect_sysctl() {
     local cur; cur="$(sysctl -n "$1" 2>/dev/null || echo '?')"
     if [[ "$cur" == "$2" ]]; then ok "$1 = $2"; else ng "$1 = $cur (기대 $2)"; fi
 }
+# conn 블록 내용 출력: 'conn <이름>' 줄 다음 ~ 다음 섹션(들여쓰기 없는 줄) 직전
+conn_block() {
+    awk -v c="$1" '
+        $0 ~ "^conn[[:space:]]+" c "[[:space:]]*$" { f = 1; next }
+        f && /^[^[:space:]#]/ { exit }
+        f' "$AWS_CONF" 2>/dev/null
+}
+
+AWS_MODE=0
+VPN_ID=""
+if [[ "${1:-}" == "--aws" ]]; then
+    AWS_MODE=1
+    VPN_ID="${2:-}"
+fi
 
 echo "== 부팅 시각: $(uptime -s)"
 
@@ -32,7 +48,11 @@ if [[ "$st" == "enabled" ]]; then ok "ipsec enabled"; else ng "ipsec $st (부팅
 
 echo "[updown 훅]"
 if [[ -x "$WRAPPER" ]]; then ok "$WRAPPER 실행 가능"; else ng "$WRAPPER 없음/실행 불가"; fi
-if grep -qE "^\s*leftupdown=${WRAPPER}\s*$" "$AWS_CONF"; then ok "aws.conf leftupdown 설정"; else ng "aws.conf leftupdown 없음"; fi
+if conn_block aws-common | grep -qE "^\s*leftupdown=${WRAPPER}\s*$"; then
+    ok "conn aws-common leftupdown 설정"
+else
+    ng "conn aws-common leftupdown 없음"
+fi
 
 echo "[터널]"
 esp="$(ipsec trafficstatus 2>/dev/null | grep -c 'type=ESP' || true)"
@@ -62,13 +82,28 @@ for i in vti1 vti2; do
     if [[ "$z" == "aws-vpn" ]]; then ok "$i → aws-vpn"; else ng "$i → $z (기대 aws-vpn)"; fi
 done
 
-if [[ "${1:-}" == "--aws" ]]; then
-    echo "[AWS 텔레메트리 ($REGION, state=available VPN)]"
-    tele="$(aws ec2 describe-vpn-connections --region "$REGION" \
-        --filters Name=state,Values=available \
-        --query 'VpnConnections[].VgwTelemetry[].Status' --output text 2>/dev/null || true)"
-    up="$(tr '\t' '\n' <<< "$tele" | grep -c '^UP$' || true)"
-    if [[ "$up" == "2" ]]; then ok "UP 2"; else ng "UP ${up} (조회값: ${tele:-없음}. 반영까지 몇 분 걸릴 수 있음)"; fi
+if (( AWS_MODE )); then
+    echo "[AWS 텔레메트리 ($REGION, ${VPN_ID:-ID 없음})]"
+    if [[ ! "$VPN_ID" =~ ^vpn-[0-9a-f]{8,17}$ ]]; then
+        ng "VPN ID 필요: --aws <vpn-id> (Terraform output vpn_connection_id). 입력값: '${VPN_ID}'"
+    else
+        state="$(aws ec2 describe-vpn-connections --region "$REGION" --vpn-connection-ids "$VPN_ID" \
+            --query 'VpnConnections[0].State' --output text 2>/dev/null || echo '조회 실패')"
+        if [[ "$state" == "available" ]]; then ok "$VPN_ID available"; else ng "$VPN_ID 상태: $state"; fi
+
+        tele="$(aws ec2 describe-vpn-connections --region "$REGION" --vpn-connection-ids "$VPN_ID" \
+            --query 'VpnConnections[0].VgwTelemetry[].[OutsideIpAddress,Status]' --output text 2>/dev/null || true)"
+        up="$(awk '$2 == "UP"' <<< "$tele" | grep -c . || true)"
+        if [[ "$up" == "2" ]]; then ok "UP 2"; else ng "UP ${up} (반영까지 몇 분 걸릴 수 있음)"; fi
+
+        aws_ips="$(awk 'NF { print $1 }' <<< "$tele" | sort | xargs)"
+        conf_ips="$(for c in aws-tun1 aws-tun2; do conn_block "$c" | sed -nE 's/^\s*right=\s*([0-9.]+).*/\1/p'; done | sort | xargs)"
+        if [[ -n "$aws_ips" && "$aws_ips" == "$conf_ips" ]]; then
+            ok "Outside IP = aws.conf right= (${aws_ips})"
+        else
+            ng "Outside IP 불일치: AWS [${aws_ips:-없음}] / aws.conf [${conf_ips:-없음}] → 7단계 갱신 필요"
+        fi
+    fi
 fi
 
 echo "[참고: 이번 부팅 updown 로그]"

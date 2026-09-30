@@ -1,28 +1,40 @@
 #!/bin/bash
 # neuroplan-vti-updown — libreswan leftupdown 래퍼 (작업일지 0930 9장)
-# 1) 기본 updown 실행
-# 2) up-client  : vti 라우트 + rp_filter=2 + disable_policy=1 (libreswan은 vti 생성 시에만 0으로 설정)
-# 3) down-client: 해당 vti 라우트 삭제 → 반대 터널로 failover
+# 1) 기본 updown 실행 (종료 코드 보존)
+# 2) up-client  : 기본 updown 성공(rc=0) + vti 인터페이스 UP일 때만
+#                 vti 라우트 + rp_filter=2 + disable_policy=1 (libreswan은 vti 생성 시에만 0으로 설정)
+# 3) down-client: 기본 updown 결과와 무관하게 해당 vti 라우트 삭제 → 반대 터널로 failover
+#                 (라우트가 남으면 내려간 터널로 트래픽이 계속 향함)
 /usr/libexec/ipsec/_updown "$@"
 rc=$?
 
+TAG="neuroplan-vti-updown"
 VPC_CIDR="10.20.0.0/16"
-case "${VTI_IFACE}" in
+case "${VTI_IFACE:-}" in
     vti1) METRIC=100 ;;
     vti2) METRIC=200 ;;
     *)    exit "$rc" ;;
 esac
 
-case "${PLUTO_VERB}" in
+case "${PLUTO_VERB:-}" in
     up-client)
+        if (( rc != 0 )); then
+            logger -t "$TAG" "${PLUTO_CONNECTION} up: _updown rc=${rc} → 라우트·sysctl 적용 안 함"
+            exit "$rc"
+        fi
+        # rc는 _updown 마지막 함수의 결과만 반영 → vti 생성 실패는 인터페이스 상태로 확인
+        if [[ -z "$(ip link show "${VTI_IFACE}" up 2>/dev/null)" ]]; then
+            logger -t "$TAG" "${PLUTO_CONNECTION} up: ${VTI_IFACE} 없음 또는 DOWN → 라우트·sysctl 적용 안 함"
+            exit "$rc"
+        fi
         sysctl -qw "net.ipv4.conf.${VTI_IFACE}.rp_filter=2" \
                    "net.ipv4.conf.${VTI_IFACE}.disable_policy=1"
         ip route replace "${VPC_CIDR}" dev "${VTI_IFACE}" metric "${METRIC}"
-        logger -t neuroplan-vti-updown "${PLUTO_CONNECTION} up: ${VPC_CIDR} dev ${VTI_IFACE} metric ${METRIC}, rp_filter=2"
+        logger -t "$TAG" "${PLUTO_CONNECTION} up: ${VPC_CIDR} dev ${VTI_IFACE} metric ${METRIC}, rp_filter=2 (_updown rc=${rc})"
         ;;
     down-client)
         ip route del "${VPC_CIDR}" dev "${VTI_IFACE}" metric "${METRIC}" 2>/dev/null
-        logger -t neuroplan-vti-updown "${PLUTO_CONNECTION} down: ${VPC_CIDR} dev ${VTI_IFACE} removed"
+        logger -t "$TAG" "${PLUTO_CONNECTION} down: ${VPC_CIDR} dev ${VTI_IFACE} removed (_updown rc=${rc})"
         ;;
 esac
 exit "$rc"
