@@ -8,12 +8,16 @@
 # 순서: Infra 먼저 → lb1·lb2 (LB는 Infra DMZ 주소 ping이 되어야 진행)
 #
 # Infra (infra) — 하는 일 (여러 번 실행해도 결과 동일)
-#   1) 전제 확인: DMZ NIC(ens161, MAC 일치), zone aws-vpn, firewalld runtime = permanent,
-#      프로필 dmz가 없으면 ens161 미사용·192.168.24.62 주소 중복 없음 (arping -D) — 하나라도 어긋나면 아무것도 바꾸지 않고 중단
-#   2) zone nw-dmz: target DROP, 192.168.24.0/24 ICMP echo만 허용 (서비스·포트 없음)
-#   3) policy aws-to-dmz: aws-vpn → nw-dmz, target DROP, 10.20.0.0/22 → 192.168.24.100:443/tcp만
-#   4) 2~3에서 permanent를 바꿨으면 firewall-cmd --reload (전후 ESP 수 출력)
-#   5) NM 프로필 dmz: ens161, 192.168.24.62/24, 게이트웨이 없음, never-default, zone nw-dmz → con up
+#   1) 전제 확인 (읽기만, 하나라도 어긋나면 아무것도 바꾸지 않고 중단)
+#      - DMZ NIC(ens161, MAC 일치), zone aws-vpn, firewalld runtime = permanent
+#      - zone nw-dmz·policy aws-to-dmz·NM 프로필 dmz: 없으면 "생성 예정", 있으면 아래 기대값과 정확히 같아야 함
+#        (값이 다르거나 예상 밖 허용이 있으면 자동 보정하지 않고 중단 → 수동 확인)
+#      - 프로필 dmz가 없으면 ens161 미사용·192.168.24.62 주소 중복 없음 (arping -D)
+#   2) zone nw-dmz (없을 때만 생성): target DROP, 192.168.24.0/24 ICMP echo만 (서비스·포트·프로토콜·소스·masquerade·forward 없음)
+#   3) policy aws-to-dmz (없을 때만 생성): aws-vpn → nw-dmz, target DROP,
+#      DR NLB Public 서브넷 3개(10.20.0.0/24, 10.20.1.0/24, 10.20.2.0/24) → 192.168.24.100:443/tcp만
+#   4) 2~3에서 생성했으면 firewall-cmd --reload (전후 ESP 수 출력)
+#   5) NM 프로필 dmz (없을 때만 생성): ens161, 192.168.24.62/24, 게이트웨이 없음, never-default, zone nw-dmz → con up
 #      (zone을 먼저 만드는 이유: zone 없이 IP를 올리면 기본 zone public(ssh 허용)에 들어감)
 # lb1·lb2 — 하는 일
 #   1) 전제 확인: DMZ NIC(ens192) 24.x 주소, Infra DMZ(192.168.24.62) ping
@@ -25,7 +29,7 @@
 #   - LB nmcli con up/reapply (Keepalived VIP가 빠질 수 있음), rp_filter·LB firewalld 변경
 #   - VPN 설정(vti·aws.conf·updown·sysctl) 변경, sysctl --system (작업일지 0930 3.5)
 #   - nw-dmz → aws-vpn 방향 policy (응답은 conntrack으로 통과)
-#   - 기존 값이 다른 프로필·zone·policy 덮어쓰기 (중단하고 수동 확인)
+#   - 기존 zone·policy·프로필 수정 (값이 다르면 중단하고 수동 확인)
 # 확인: check_dmz_state_0930.sh
 # 주의: "명령 | grep -q"·"| head" 같은 조기 종료 파이프를 쓰지 않는다 (pipefail 거짓 실패, 작업일지 0930 3.9)
 set -euo pipefail
@@ -38,7 +42,7 @@ case "${1:-}" in
 esac
 
 VPC_CIDR="10.20.0.0/16"
-NLB_SRC="10.20.0.0/22"               # DR NLB Public 서브넷 10.20.0~2.0/24
+NLB_SRCS="10.20.0.0/24 10.20.1.0/24 10.20.2.0/24"   # DR NLB Public 서브넷 (modules/network public_subnets 기본값)
 DMZ_CIDR="192.168.24.0/24"
 INFRA_DMZ_IP="192.168.24.62"
 VIP="192.168.24.100"
@@ -50,7 +54,8 @@ VPN_ZONE="aws-vpn"
 POLICY="aws-to-dmz"
 CONN="dmz"
 ICMP_RULE="rule family=\"ipv4\" source address=\"${DMZ_CIDR}\" icmp-type name=\"echo-request\" accept"
-POLICY_RULE="rule family=\"ipv4\" source address=\"${NLB_SRC}\" destination address=\"${VIP}\" port port=\"443\" protocol=\"tcp\" accept"
+policy_rule() { printf 'rule family="ipv4" source address="%s" destination address="%s" port port="443" protocol="tcp" accept' "$1" "$VIP"; }
+POLICY_RULES="$(for c in $NLB_SRCS; do policy_rule "$c"; echo; done | sort)"   # 기대 규칙 (정렬, 줄 단위)
 
 run() {
     if (( APPLY )); then echo "  + $*"; "$@"; else echo "  [dry-run] $*"; fi
@@ -63,8 +68,46 @@ fw_dump() {
 }
 esp_count() { ipsec trafficstatus 2>/dev/null | grep -c 'type=ESP' || true; }
 
+# 기존 zone이 기대값과 같은지 (읽기 전용). 다르면 이유를 한 줄씩 출력
+zone_diff() {
+    [[ "$(fwp --zone="$ZONE" --get-target)" == "DROP" ]] || echo "target $(fwp --zone="$ZONE" --get-target) (기대 DROP)"
+    local k v
+    for k in services ports protocols sources source-ports forward-ports icmp-blocks; do
+        v="$(fwp --zone="$ZONE" --list-"$k")"
+        [[ -z "${v//[[:space:]]/}" ]] || echo "${k}: ${v} (기대 없음)"
+    done
+    ! fwp --zone="$ZONE" --query-masquerade >/dev/null || echo "masquerade yes (기대 no)"
+    ! fwp --zone="$ZONE" --query-forward >/dev/null    || echo "forward yes (기대 no, zone 안 포워딩)"
+    v="$(fwp --zone="$ZONE" --list-rich-rules)"
+    [[ "$v" == "$ICMP_RULE" ]] || echo "rich rules 불일치: [${v//$'\n'/ | }] (기대 ICMP 1개)"
+}
+# 기존 policy가 기대값과 같은지 (읽기 전용). 다르면 이유를 한 줄씩 출력
+policy_diff() {
+    local v
+    v="$(fwp --policy="$POLICY" --list-ingress-zones)"; [[ "$v" == "$VPN_ZONE" ]] || echo "ingress [${v}] (기대 ${VPN_ZONE})"
+    v="$(fwp --policy="$POLICY" --list-egress-zones)";  [[ "$v" == "$ZONE" ]]     || echo "egress [${v}] (기대 ${ZONE})"
+    v="$(fwp --policy="$POLICY" --get-target)";         [[ "$v" == "DROP" ]]      || echo "target ${v} (기대 DROP)"
+    local k
+    for k in services ports protocols source-ports forward-ports icmp-blocks; do
+        v="$(fwp --policy="$POLICY" --list-"$k")"
+        [[ -z "${v//[[:space:]]/}" ]] || echo "${k}: ${v} (기대 없음)"
+    done
+    ! fwp --policy="$POLICY" --query-masquerade >/dev/null || echo "masquerade yes (기대 no)"
+    v="$(fwp --policy="$POLICY" --list-rich-rules | sort)"
+    [[ "$v" == "$POLICY_RULES" ]] || echo "rich rules 불일치: [${v//$'\n'/ | }] (기대 ${NLB_SRCS// /, } → ${VIP}:443 3개)"
+}
+# 기존 NM 프로필이 기대값과 같은지 (읽기 전용)
+conn_diff() {
+    local v
+    v="$(nmcli -g connection.interface-name con show "$CONN")"; [[ "$v" == "$INFRA_DMZ_NIC" ]]      || echo "ifname ${v} (기대 ${INFRA_DMZ_NIC})"
+    v="$(nmcli -g ipv4.addresses con show "$CONN")";            [[ "$v" == "${INFRA_DMZ_IP}/24" ]]  || echo "addresses ${v} (기대 ${INFRA_DMZ_IP}/24)"
+    v="$(nmcli -g connection.zone con show "$CONN")";           [[ "$v" == "$ZONE" ]]               || echo "zone ${v} (기대 ${ZONE})"
+    v="$(nmcli -g ipv4.gateway con show "$CONN")";              [[ -z "$v" ]]                       || echo "gateway ${v} (기대 없음)"
+    v="$(nmcli -g ipv4.never-default con show "$CONN")";        [[ "$v" == "yes" ]]                 || echo "never-default ${v} (기대 yes)"
+}
+
 setup_infra() {
-    echo "[1] 전제 확인"
+    echo "[1] 전제 확인 (읽기만)"
     [[ -e "/sys/class/net/${INFRA_DMZ_NIC}" ]] || die "${INFRA_DMZ_NIC} 없음 (VMware에서 NIC 추가 먼저: Custom VMnet0 Bridged)"
     local mac; mac="$(cat "/sys/class/net/${INFRA_DMZ_NIC}/address")"
     [[ "$mac" == "$INFRA_DMZ_MAC" ]] || die "${INFRA_DMZ_NIC} MAC ${mac} ≠ ${INFRA_DMZ_MAC} (NIC 확인 후 스크립트 변수 수정)"
@@ -78,63 +121,60 @@ setup_infra() {
     else
         die "firewalld runtime ≠ permanent (reload하면 runtime 변경이 사라짐, 먼저 확인)"
     fi
-    # 프로필을 새로 만들 경우의 전제는 firewalld를 바꾸기 전에 확인 (중간에 멈춰 일부만 적용되는 것 방지)
-    local has_conn=0
+    local d have_zone=0 have_policy=0 have_conn=0
+    if [[ "$zones" == *" ${ZONE} "* ]]; then
+        d="$(zone_diff)"; [[ -z "$d" ]] || die "zone ${ZONE}가 기대값과 다름 (자동 보정 안 함, 수동 확인):"$'\n'"${d}"
+        have_zone=1; echo "  zone ${ZONE} 있음, 기대값과 일치"
+    else
+        echo "  zone ${ZONE} 없음 → 생성 예정"
+    fi
+    if [[ "$policies" == *" ${POLICY} "* ]]; then
+        d="$(policy_diff)"; [[ -z "$d" ]] || die "policy ${POLICY}가 기대값과 다름 (자동 보정 안 함, 수동 확인):"$'\n'"${d}"
+        have_policy=1; echo "  policy ${POLICY} 있음, 기대값과 일치"
+    else
+        echo "  policy ${POLICY} 없음 → 생성 예정"
+    fi
     if nmcli -g connection.id con show "$CONN" >/dev/null 2>&1; then
-        has_conn=1
-        echo "  NM 프로필 ${CONN} 있음 → [5]에서 값 확인"
+        d="$(conn_diff)"; [[ -z "$d" ]] || die "NM 프로필 ${CONN}가 기대값과 다름 (자동 보정 안 함, 수동 확인):"$'\n'"${d}"
+        have_conn=1; echo "  NM 프로필 ${CONN} 있음, 기대값과 일치"
     else
         local cur
         cur="$(nmcli -g GENERAL.CONNECTION device show "$INFRA_DMZ_NIC" 2>/dev/null || true)"
         [[ -z "$cur" ]] || die "${INFRA_DMZ_NIC}에 다른 프로필(${cur})이 활성"
         if arping -D -q -c 2 -I "$INFRA_DMZ_NIC" "$INFRA_DMZ_IP"; then
-            echo "  ${INFRA_DMZ_IP} 응답 없음 (주소 중복 없음)"
+            echo "  NM 프로필 ${CONN} 없음 → 생성 예정 (${INFRA_DMZ_IP} 응답 없음, 주소 중복 없음)"
         else
             die "${INFRA_DMZ_IP}에 응답하는 장비 있음 (주소 중복)"
         fi
     fi
 
-    local changed=0
     echo "[2] zone ${ZONE}"
-    if [[ "$zones" == *" ${ZONE} "* ]]; then
-        if [[ "$(fwp --zone="$ZONE" --get-target)" == "DROP" ]]; then echo "  이미 target DROP"
-        else run firewall-cmd --permanent --zone="$ZONE" --set-target=DROP; changed=1; fi
-        if fwp --zone="$ZONE" --query-rich-rule="$ICMP_RULE" >/dev/null; then echo "  이미 ICMP 규칙"
-        else run firewall-cmd --permanent --zone="$ZONE" --add-rich-rule="$ICMP_RULE"; changed=1; fi
-        local extra
-        extra="$(fwp --zone="$ZONE" --list-services) $(fwp --zone="$ZONE" --list-ports) $(fwp --zone="$ZONE" --list-rich-rules | grep -vF "$ICMP_RULE" || true)"
-        [[ -z "${extra//[[:space:]]/}" ]] || echo "  ⚠ 예상 밖 허용 (수동 확인): ${extra}"
+    if (( have_zone )); then
+        echo "  이미 있음 (기대값과 일치)"
     else
         run firewall-cmd --permanent --new-zone="$ZONE"
         run firewall-cmd --permanent --zone="$ZONE" --set-target=DROP
         run firewall-cmd --permanent --zone="$ZONE" --add-rich-rule="$ICMP_RULE"
-        changed=1
     fi
 
     echo "[3] policy ${POLICY} (${VPN_ZONE} → ${ZONE})"
-    if [[ "$policies" == *" ${POLICY} "* ]]; then
-        if fwp --policy="$POLICY" --query-ingress-zone="$VPN_ZONE" >/dev/null; then echo "  이미 ingress ${VPN_ZONE}"
-        else run firewall-cmd --permanent --policy="$POLICY" --add-ingress-zone="$VPN_ZONE"; changed=1; fi
-        if fwp --policy="$POLICY" --query-egress-zone="$ZONE" >/dev/null; then echo "  이미 egress ${ZONE}"
-        else run firewall-cmd --permanent --policy="$POLICY" --add-egress-zone="$ZONE"; changed=1; fi
-        if [[ "$(fwp --policy="$POLICY" --get-target)" == "DROP" ]]; then echo "  이미 target DROP"
-        else run firewall-cmd --permanent --policy="$POLICY" --set-target=DROP; changed=1; fi
-        if fwp --policy="$POLICY" --query-rich-rule="$POLICY_RULE" >/dev/null; then echo "  이미 443 규칙"
-        else run firewall-cmd --permanent --policy="$POLICY" --add-rich-rule="$POLICY_RULE"; changed=1; fi
-        local pextra
-        pextra="$(fwp --policy="$POLICY" --list-rich-rules | grep -vF "$POLICY_RULE" || true)"
-        [[ -z "$pextra" ]] || echo "  ⚠ 예상 밖 규칙 (수동 확인): ${pextra}"
+    if (( have_policy )); then
+        echo "  이미 있음 (기대값과 일치)"
     else
         run firewall-cmd --permanent --new-policy="$POLICY"
         run firewall-cmd --permanent --policy="$POLICY" --add-ingress-zone="$VPN_ZONE"
         run firewall-cmd --permanent --policy="$POLICY" --add-egress-zone="$ZONE"
         run firewall-cmd --permanent --policy="$POLICY" --set-target=DROP
-        run firewall-cmd --permanent --policy="$POLICY" --add-rich-rule="$POLICY_RULE"
-        changed=1
+        local c
+        for c in $NLB_SRCS; do
+            run firewall-cmd --permanent --policy="$POLICY" --add-rich-rule="$(policy_rule "$c")"
+        done
     fi
 
     echo "[4] firewalld reload"
-    if (( changed )); then
+    if (( have_zone && have_policy )); then
+        echo "  변경 없음 → reload 안 함"
+    else
         local before after
         before="$(esp_count)"
         run firewall-cmd --reload
@@ -144,25 +184,13 @@ setup_infra() {
             echo "  ESP ${before} → ${after}"
             [[ "$after" == "$before" ]] || echo "  ⚠ ESP 수가 바뀜 → check_vpn_state_0930.sh로 확인"
         fi
-    else
-        echo "  변경 없음 → reload 안 함"
     fi
 
     echo "[5] NM 프로필 ${CONN} (${INFRA_DMZ_NIC} ${INFRA_DMZ_IP}/24)"
-    if (( has_conn )); then
-        local ifn addr z gw nd st
-        ifn="$(nmcli -g connection.interface-name con show "$CONN")"
-        addr="$(nmcli -g ipv4.addresses con show "$CONN")"
-        z="$(nmcli -g connection.zone con show "$CONN")"
-        gw="$(nmcli -g ipv4.gateway con show "$CONN")"
-        nd="$(nmcli -g ipv4.never-default con show "$CONN")"
-        if [[ "$ifn" == "$INFRA_DMZ_NIC" && "$addr" == "${INFRA_DMZ_IP}/24" && "$z" == "$ZONE" && -z "$gw" && "$nd" == "yes" ]]; then
-            echo "  이미 설정 (ifname ${ifn}, ${addr}, zone ${z}, gw 없음, never-default)"
-        else
-            die "기존 프로필 ${CONN} 값이 다름 (ifname=${ifn} addr=${addr} zone=${z} gw=${gw} never-default=${nd}, 수동 확인)"
-        fi
+    if (( have_conn )); then
+        local st
         st="$(nmcli -g GENERAL.STATE con show "$CONN" 2>/dev/null || true)"
-        if [[ "$st" == "activated" ]]; then echo "  이미 활성"; else run nmcli con up "$CONN"; fi
+        if [[ "$st" == "activated" ]]; then echo "  이미 있음·활성"; else run nmcli con up "$CONN"; fi
     else
         run nmcli con add type ethernet con-name "$CONN" ifname "$INFRA_DMZ_NIC" \
             connection.zone "$ZONE" connection.autoconnect yes \

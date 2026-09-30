@@ -4,7 +4,8 @@
 # 실행 위치: Infra VM, lb1, lb2 (root). 호스트 이름(hostname -s)으로 점검 항목을 고른다
 #   bash check_dmz_state_0930.sh
 # 점검
-#   infra   : DMZ NIC(ens161)·MAC·주소, NM 프로필 dmz, zone nw-dmz, policy aws-to-dmz(permanent = runtime, nft 반영),
+#   infra   : DMZ NIC(ens161)·MAC·주소, NM 프로필 dmz, zone nw-dmz·policy aws-to-dmz(규칙이 기대값과 정확히 같은지,
+#             permanent = runtime, nft 반영),
 #             라우트(24.100 → ens161, default는 ens161 아님), VIP ping·TCP 443
 #   lb1/lb2 : ens192 24.x 주소, 10.20 경로 → 192.168.24.62 dev ens192(런타임·NM), zone nw-dmz 443,
 #             Infra DMZ ping, keepalived·haproxy
@@ -14,7 +15,7 @@
 set -uo pipefail
 
 VPC_CIDR="10.20.0.0/16"
-NLB_SRC="10.20.0.0/22"
+NLB_SRCS="10.20.0.0/24 10.20.1.0/24 10.20.2.0/24"   # DR NLB Public 서브넷 (modules/network public_subnets 기본값)
 DMZ_CIDR="192.168.24.0/24"
 INFRA_DMZ_IP="192.168.24.62"
 VIP="192.168.24.100"
@@ -27,7 +28,8 @@ VPN_ZONE="aws-vpn"
 POLICY="aws-to-dmz"
 CONN="dmz"
 ICMP_RULE="rule family=\"ipv4\" source address=\"${DMZ_CIDR}\" icmp-type name=\"echo-request\" accept"
-POLICY_RULE="rule family=\"ipv4\" source address=\"${NLB_SRC}\" destination address=\"${VIP}\" port port=\"443\" protocol=\"tcp\" accept"
+policy_rule() { printf 'rule family="ipv4" source address="%s" destination address="%s" port port="443" protocol="tcp" accept' "$1" "$VIP"; }
+POLICY_RULES="$(for c in $NLB_SRCS; do policy_rule "$c"; echo; done | sort)"   # 기대 규칙 (정렬, 줄 단위)
 fail=0
 
 ok() { printf '  [OK]   %s\n' "$1"; }
@@ -67,27 +69,30 @@ check_infra() {
     z="$(firewall-cmd --get-zone-of-interface="$INFRA_DMZ_NIC" 2>/dev/null || echo none)"
     if [[ "$z" == "$ZONE" ]]; then ok "${INFRA_DMZ_NIC} → ${ZONE}"; else ng "${INFRA_DMZ_NIC} → ${z} (기대 ${ZONE})"; fi
     if [[ "$(fwp --zone="$ZONE" --get-target 2>/dev/null || true)" == "DROP" ]]; then ok "${ZONE} target DROP"; else ng "${ZONE} target DROP 아님"; fi
-    if fwp --zone="$ZONE" --query-rich-rule="$ICMP_RULE" >/dev/null 2>&1; then ok "${ZONE} ICMP(24.0/24) 규칙"; else ng "${ZONE} ICMP 규칙 없음"; fi
+    local v
+    v="$(fwp --zone="$ZONE" --list-rich-rules 2>/dev/null)"
+    if [[ "$v" == "$ICMP_RULE" ]]; then ok "${ZONE} rich rule = ICMP(24.0/24) 1개"; else ng "${ZONE} rich rules 불일치: [${v//$'\n'/ | }]"; fi
     local extra
-    extra="$(fwp --zone="$ZONE" --list-services 2>/dev/null) $(fwp --zone="$ZONE" --list-ports 2>/dev/null)"
-    if [[ -z "${extra//[[:space:]]/}" ]]; then ok "${ZONE} 서비스·포트 없음"; else ng "${ZONE} 예상 밖 허용: ${extra}"; fi
+    extra="$(fwp --zone="$ZONE" --list-services 2>/dev/null) $(fwp --zone="$ZONE" --list-ports 2>/dev/null) $(fwp --zone="$ZONE" --list-protocols 2>/dev/null) $(fwp --zone="$ZONE" --list-sources 2>/dev/null)"
+    if [[ -z "${extra//[[:space:]]/}" ]]; then ok "${ZONE} 서비스·포트·프로토콜·소스 없음"; else ng "${ZONE} 예상 밖 허용: ${extra}"; fi
     local p_ok=1
     fwp --policy="$POLICY" --query-ingress-zone="$VPN_ZONE" >/dev/null 2>&1 || p_ok=0
     fwp --policy="$POLICY" --query-egress-zone="$ZONE" >/dev/null 2>&1 || p_ok=0
     [[ "$(fwp --policy="$POLICY" --get-target 2>/dev/null || true)" == "DROP" ]] || p_ok=0
     if (( p_ok )); then ok "${POLICY}: ${VPN_ZONE} → ${ZONE}, target DROP"; else ng "${POLICY} zone/target 불일치 또는 없음"; fi
-    if fwp --policy="$POLICY" --query-rich-rule="$POLICY_RULE" >/dev/null 2>&1; then ok "${POLICY}: ${NLB_SRC} → ${VIP}:443/tcp"; else ng "${POLICY} 443 규칙 없음"; fi
+    v="$(fwp --policy="$POLICY" --list-rich-rules 2>/dev/null | sort)"
+    if [[ "$v" == "$POLICY_RULES" ]]; then ok "${POLICY} rich rules = ${NLB_SRCS// /, } → ${VIP}:443/tcp (3개, 그 외 없음)"
+    else ng "${POLICY} rich rules 불일치: [${v//$'\n'/ | }]"; fi
     local zr zp pr pp
     zr="$(fw_info --info-zone="$ZONE")";      zp="$(fw_info --permanent --info-zone="$ZONE")"
     pr="$(fw_info --info-policy="$POLICY")";  pp="$(fw_info --permanent --info-policy="$POLICY")"
     if [[ -n "$zr" && "$zr" == "$zp" && -n "$pr" && "$pr" == "$pp" ]]; then ok "runtime = permanent (${ZONE}, ${POLICY})"
     else ng "runtime ≠ permanent (${ZONE} 또는 ${POLICY}) → firewall-cmd --reload 필요 여부 확인"; fi
-    local nft; nft="$(nft list ruleset 2>/dev/null || true)"
-    if grep -qE "daddr ${VIP//./\\.} .*saddr ${NLB_SRC//./\\.} .*dport 443 accept|saddr ${NLB_SRC//./\\.} .*daddr ${VIP//./\\.} .*dport 443 accept" <<< "$nft"; then
-        ok "nft 규칙 반영 (443 accept)"
-    else
-        ng "nft에 443 accept 규칙 없음"
-    fi
+    local nft c n=0; nft="$(nft list ruleset 2>/dev/null || true)"
+    for c in $NLB_SRCS; do
+        grep -qE "daddr ${VIP//./\\.} .*saddr ${c//./\\.} .*dport 443 accept|saddr ${c//./\\.} .*daddr ${VIP//./\\.} .*dport 443 accept" <<< "$nft" && n=$((n + 1))
+    done
+    if (( n == 3 )); then ok "nft 규칙 반영 (443 accept 3개)"; else ng "nft 443 accept 규칙 ${n}/3"; fi
 
     echo "[라우트]"
     local g; g="$(ip route get "$VIP" 2>/dev/null || true)"
