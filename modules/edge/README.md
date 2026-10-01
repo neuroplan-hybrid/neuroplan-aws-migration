@@ -4,7 +4,7 @@ DR NLB와 Route 53(GSLB) 레코드·헬스체크를 만드는 희재 담당 모�
 
 ```
 사용자 / Route 53 헬스체커
-        │  app.<도메인> (Weighted → Failover)
+        │  app.<도메인> (Weighted: 이관 비율 조정 → 운영 ROSA 1 / 온프렘 0)
         ├──────────────▶ ROSA Ingress LB (ROSA 관리) → Router → Route → App
         └──────────────▶ DR NLB (이 모듈, Public 3AZ, TCP 443)
                               │ IP target 192.168.24.100:443, availability_zone = all
@@ -19,23 +19,28 @@ DR NLB와 Route 53(GSLB) 레코드·헬스체크를 만드는 희재 담당 모�
 | `enable_dr_nlb` | SG(인바운드 443 ← `dr_nlb_ingress_cidrs`, 아웃바운드 → VIP/32:443), NLB(internet-facing), Target Group(TCP, IP, TCP 헬스체크), VIP 타깃, Listener 443 |
 | `enable_route53_routing` + `enable_dr_nlb` | 헬스체크 `dr-health`(HTTPS, SNI, `/health/ready`), `dr-health.<도메인>` Alias → DR NLB, app 레코드 `onprem` |
 | `enable_route53_routing` + `primary_lb_dns_name` | 헬스체크 `primary-health`, `primary-health.<도메인>` Alias → ROSA LB, app 레코드 `rosa` |
-| `app_routing_policy` | `weighted`: `app_weighted[rosa/onprem]` / `failover`: `app_failover[rosa=PRIMARY, onprem=SECONDARY]` / `none`: app 레코드 없음 |
+| `app_routing_policy` | `weighted`: `app_weighted[rosa/onprem]` (사용) / `failover`: `app_failover[rosa=PRIMARY, onprem=SECONDARY]` (모듈 호환용, 사용 계획 없음) / `none`: app 레코드 없음 |
 
 - 도메인이 없어도 DR NLB는 만들 수 있다 (`enable_route53_routing = false`). PoC는 NLB DNS로 확인한다.
 - 헬스체크 대상 이름(`primary-health`, `dr-health`)은 app 레코드와 분리한다 (시나리오 4.8).
 - NLB 타깃 헬스체크는 TCP, Route 53 헬스체크는 HTTPS + FQDN + SNI (NLB HTTPS 헬스체크는 Host/SNI 지정 불가).
 - VPN 너머 IP 타깃은 Client IP 보존이 안 되므로 `preserve_client_ip = false`. 온프렘에는 NLB 사설 IP(Public 서브넷)가 출발지로 보인다.
 
-## Weighted ↔ Failover 전환
+## 라우팅 단계 (B안 확정: Weighted 기반 active-passive)
 
-Route 53은 같은 이름·타입에 Weighted 레코드와 Failover 레코드를 함께 둘 수 없다. Terraform은 레코드마다 따로 API를 호출하므로 `weighted → failover`를 한 번의 apply로 바꾸면 첫 레코드 생성에서 실패할 수 있다.
+운영 단계도 Failover 레코드로 바꾸지 않고 **Weighted를 유지**한다 (#28 리뷰, 예린 제안 · 정현 · 희재 동의, 1001).
 
-| 방식 | 절차 | 영향 |
-|---|---|---|
-| A. 설계대로 Failover | Cutover 점검 모드 중 `app_routing_policy = "none"` apply → `"failover"` apply | `app` 레코드가 apply 사이(1~2분) 없음. 그 사이 조회한 Resolver는 SOA 음수 캐시 시간 동안 NXDOMAIN을 기억 |
-| B. Weighted 유지 | 운영 단계도 Weighted, `rosa_weight = 1`, `onprem_weight = 0` | 가중치만 변경 → 공백 없음. Route 53은 0이 아닌 레코드가 모두 unhealthy일 때만 가중치 0 레코드로 응답 → active-passive |
+| 단계 | envs/prod `route53_routing_mode` | 가중치 (ROSA / 온프렘) | 헬스체크 |
+|---|---|---|---|
+| 초기 | `off` | — (헬스체크·레코드 없음) | — |
+| 전환 검증 | `weighted` | 0 / 100 → 10 / 90 → 50 / 50 등 단계적 조정 | 두 레코드 모두 개별 연결 |
+| 운영 기본 | `weighted` | **1 / 0** (active-passive) | 두 레코드 모두 개별 연결 |
 
-방식은 팀 결정 후 이 표를 갱신한다.
+- 운영 단계 동작: Route 53은 가중치가 0보다 큰 레코드 중 healthy인 것만 응답하고, **가중치 0보다 큰 레코드가 모두 unhealthy일 때만 가중치 0 레코드로 응답**한다 → 평소 ROSA만 응답, ROSA 헬스체크 실패 시 온프렘(DR NLB)으로 전환
+- 그래서 ROSA·온프렘 레코드 모두 `primary-health`·`dr-health` 헬스체크를 각각 연결한다 (이 모듈은 사이트가 있으면 자동 연결)
+- Failover 레코드로 바꾸지 않는 이유: Route 53은 같은 이름·타입에 Weighted와 Failover 레코드를 함께 둘 수 없다. 바꾸려면 `none`을 거쳐 apply를 두 번 해야 하고, 그 사이(1~2분) `app` 레코드가 없어 조회한 Resolver가 SOA 음수 캐시 시간(현재 Zone 900초) 동안 NXDOMAIN을 기억한다
+- `failover` 값과 `app_failover` 리소스는 모듈 호환용으로만 남긴다 (envs/prod에서 쓰지 않음)
+- 근거: [Route 53 — Active-active and active-passive failover](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover-types.html) "If all the records that have a weight greater than 0 are unhealthy, then Route 53 responds to queries using the zero-weighted records."
 
 ## 다른 담당과의 연결
 

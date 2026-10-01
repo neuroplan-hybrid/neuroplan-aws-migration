@@ -5,8 +5,8 @@
 #   · 온프렘 허용: Infra policy aws-to-dmz (Public 서브넷 /24 3개 → 24.100:443, PR #25)
 # - ROSA Ingress LB는 ROSA가 생성·관리 → 이 모듈은 DNS 이름만 입력받아 Alias로 가리킴 (생성·수정 안 함)
 # - Hosted Zone은 bootstrap/dns 소관 → zone ID·도메인은 입력값 (모듈 안에서 조회하지 않음)
-# - Route 53은 같은 이름에 Weighted와 Failover 레코드를 함께 둘 수 없음
-#   → weighted ↔ failover 전환은 app_routing_policy = "none" apply를 한 번 거친다 (README 참고)
+# - 운영 단계도 Weighted 유지(ROSA 1 / 온프렘 0, B안) → 정책 전환 없음 (README 라우팅 단계)
+#   · failover는 모듈 호환용. Route 53은 같은 이름에 Weighted와 Failover를 함께 둘 수 없어 쓰려면 "none"을 거쳐야 함
 
 locals {
   domain = var.domain_name == null ? null : trimsuffix(lower(var.domain_name), ".")
@@ -235,7 +235,7 @@ resource "aws_route53_record" "dr_health" {
 }
 
 # ---------- Route 53 레코드: app (GSLB) ----------
-# Weighted(이관 단계)와 Failover(운영 단계)는 리소스를 분리 → plan에서 어느 정책인지 바로 보임
+# Weighted(이관·운영, B안)와 Failover(모듈 호환용)는 리소스를 분리 → plan에서 어느 정책인지 바로 보임
 # Alias 레코드라 TTL 없음 (ELB Alias 60초)
 
 resource "aws_route53_record" "app_weighted" {

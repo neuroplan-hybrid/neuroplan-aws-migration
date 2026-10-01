@@ -161,7 +161,7 @@ variable "primary_lb_zone_id" {
 }
 
 variable "app_routing_policy" {
-  description = "app 레코드 정책: weighted(이관) / failover(운영) / none(레코드 없음, 정책 전환 중간 단계)"
+  description = "app 레코드 정책: weighted(이관·운영, B안) / failover(모듈 호환용, 사용 계획 없음) / none(레코드 없음)"
   type        = string
   default     = "weighted"
 
@@ -180,7 +180,7 @@ variable "app_routing_policy" {
 }
 
 variable "rosa_weight" {
-  description = "Weighted: ROSA 가중치 (0~255). 시나리오: 0 → 10 → 50"
+  description = "Weighted: ROSA 가중치 (0~255). 전환 검증 0 → 10 → 50, 운영 1"
   type        = number
   default     = 0
 
@@ -191,7 +191,7 @@ variable "rosa_weight" {
 }
 
 variable "onprem_weight" {
-  description = "Weighted: 온프렘(DR NLB) 가중치 (0~255). 시나리오: 100 → 90 → 50"
+  description = "Weighted: 온프렘(DR NLB) 가중치 (0~255). 전환 검증 100 → 90 → 50, 운영 0 (ROSA 레코드가 모두 unhealthy일 때만 응답)"
   type        = number
   default     = 100
 

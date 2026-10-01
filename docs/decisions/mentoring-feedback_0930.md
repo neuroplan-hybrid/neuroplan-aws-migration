@@ -34,7 +34,7 @@
 | 축 | 내용 | 관련 피드백 |
 |---|---|---|
 | A. ROSA HCP 구조 | Hosted Control Plane / Worker Machine Pool / 기본 Ingress Controller / Route | F1, F2 |
-| B. GSLB | Route 53 가중치 → Failover + 헬스체크 | F3, F4 |
+| B. GSLB | Route 53 Weighted + 헬스체크 (이관: 비율 조정 → 운영: ROSA 1 / 온프렘 0 active-passive) | F3, F4 |
 | C. 부하 기반 DR 검증 | k6 트래픽을 건 상태에서 장애 → RTO·에러율 측정 | F5, F6 |
 | D. 앱 고가용성 | Replica / Probe / RollingUpdate / PDB / PriorityClass / Topology Spread | F6, F7, F11 |
 | E. 시크릿 관리 | HashiCorp Vault + 동적 DB 자격증명 | F8 |
@@ -89,13 +89,20 @@
 ### B. GSLB = Route 53 (F3, F4)
 
 - AWS에 "GSLB"라는 이름의 단일 상품은 없음. **Route 53**(DNS 방식: Weighted / Failover / Latency / Geolocation + 헬스체크)이 GSLB 역할. 비교 대상으로 Global Accelerator(Anycast IP)가 있음
-- 우리 설계의 Route 53 가중치(이관) → Failover(운영)가 이미 GSLB → **발표와 구성도에 "Route 53 = GSLB"를 명시**
+- 우리 설계의 Route 53 Weighted(이관 비율 조정 → 운영 active-passive) + 헬스체크가 이미 GSLB → **발표와 구성도에 "Route 53 = GSLB"를 명시**
 
 | Route 53 정책 | 우리 구조 적용 |
 |---|---|
-| Weighted + 헬스체크 | ✅ 이관 단계 (100 → 10 → 50, **5:5 검증**) |
-| Failover + 헬스체크 | ✅ 운영 단계 핵심 (T6) |
+| Weighted + 헬스체크 | ✅ 전환 검증 (온프렘 100 → 90 → 50, **5:5 검증**) + ✅ **운영 단계 핵심 (T6)**: ROSA 1 / 온프렘 0 Weighted 기반 active-passive |
+| Failover + 헬스체크 | ❌ 사용 안 함 (1001 변경, 아래) |
 | Latency / Geolocation | ❌ 서울 리전 하나 + 국내 사용자라 의미 없음 |
+
+**운영 단계 정책 변경: Failover → Weighted 기반 active-passive (1001, #28 리뷰 · 예린 제안, 정현·희재 동의)**
+- 단계: 초기 Routing `off` → 전환 검증 Weighted 10 / 90 등 단계적 조정 → 운영 기본 ROSA 1 / 온프렘 0
+- ROSA·온프렘 레코드 모두 개별 헬스체크(`primary-health`, `dr-health`) 연결
+- 동작: 평소 ROSA만 응답. 가중치 0보다 큰 레코드(ROSA)가 모두 unhealthy면 Route 53이 가중치 0 레코드(온프렘)로 응답 → T6 장애 전환 목적 충족 ([AWS 문서](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-failover-types.html))
+- 이유: 같은 이름에 Weighted와 Failover 레코드를 함께 둘 수 없음 → Failover로 바꾸려면 `none`을 거친 apply 2회, 그 사이 `app` 레코드 공백과 NXDOMAIN 음수 캐시(최대 900초) 위험
+- 반영: `modules/edge` README·변수 설명, envs/prod `route53_routing_mode` 주석(#30), 시나리오 4.8
 
 **5:5 검증 방법 (희재·예린 의견 일치)**
 - Route 53 가중치는 **DNS 응답 비율**이지 요청 한 건 단위 L7 분배가 아님 → Resolver 캐시와 TTL(ELB Alias 60초) 영향 → 정확히 500:500을 기대하지 않음
