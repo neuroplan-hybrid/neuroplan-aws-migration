@@ -57,3 +57,12 @@ module "ecr" {
 
   force_delete = var.ecr_force_delete
 }
+
+module "vault_kms" {
+  count  = var.enable_vault_kms ? 1 : 0
+  source = "../../modules/vault-kms"
+
+  tags = {
+    Owner = "yerin"
+  }
+}

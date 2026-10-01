@@ -68,3 +68,21 @@ output "rds_master_user_secret_arn" {
   description = "RDS Master 자격 증명이 저장된 Secrets Manager ARN"
   value       = try(module.data[0].master_user_secret_arn, null)
 }
+
+
+# ---------- Vault / KMS ----------
+
+output "vault_kms_key_id" {
+  description = "KMS key ID for Vault auto-unseal"
+  value       = try(module.vault_kms[0].key_id, null)
+}
+
+output "vault_kms_key_arn" {
+  description = "KMS key ARN for Vault auto-unseal"
+  value       = try(module.vault_kms[0].key_arn, null)
+}
+
+output "vault_kms_alias_name" {
+  description = "KMS alias for Vault auto-unseal"
+  value       = try(module.vault_kms[0].alias_name, null)
+}
