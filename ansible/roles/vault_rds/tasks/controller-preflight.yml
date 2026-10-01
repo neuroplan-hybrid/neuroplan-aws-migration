@@ -1,0 +1,35 @@
+---
+- name: Require RDS connection and Vault management values
+  ansible.builtin.assert:
+    that:
+      - vault_rds_endpoint | length > 0
+      - vault_rds_master_secret_arn | length > 0
+      - vault_rds_aws_region | length > 0
+    fail_msg: "RDS Endpoint, Master Secret ARN, 리전을 입력하세요."
+  no_log: true
+
+- name: Verify controller can read the RDS Master Secret
+  ansible.builtin.command:
+    argv:
+      - aws
+      - secretsmanager
+      - get-secret-value
+      - --region
+      - "{{ vault_rds_aws_region }}"
+      - --secret-id
+      - "{{ vault_rds_master_secret_arn }}"
+      - --query
+      - SecretString
+      - --output
+      - text
+  register: vault_rds_master_secret_raw
+  changed_when: false
+  no_log: true
+
+- name: Verify TCP 3306 from controller to RDS
+  ansible.builtin.wait_for:
+    host: "{{ vault_rds_endpoint }}"
+    port: "{{ vault_rds_port }}"
+    timeout: 10
+    state: started
+  changed_when: false
