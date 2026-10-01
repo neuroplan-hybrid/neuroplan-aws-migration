@@ -40,9 +40,19 @@ variable "enable_dr_nlb" {
   default = true
 }
 
-variable "enable_route53_routing" {
-  type    = bool
-  default = false
+# Route 53 app 레코드 라우팅 (Route 53 = GSLB, PR #22 결정 B)
+# 현재: 4단계 모두 off (PR #28 리뷰 조건 — health 호스트·인증서·라우팅 정책 준비 후 별도 tfvars PR로 켬)
+# 예정 (B안): 이관·운영 모두 weighted. 이관은 가중치 조정(ROSA 0 → 10 → 50), 운영은 ROSA 1 / 온프렘 0 (Weighted 기반 active-passive)
+# off = 헬스체크·레코드 없음 / weighted = ROSA·온프렘(DR NLB) 가중치
+# failover는 모듈 호환용으로 validation에만 남김 (사용 계획 없음, 같은 이름의 weighted 레코드와 공존 불가)
+variable "route53_routing_mode" {
+  type    = string
+  default = "off"
+
+  validation {
+    condition     = contains(["off", "weighted", "failover"], var.route53_routing_mode)
+    error_message = "route53_routing_mode는 off, weighted, failover 중 하나여야 합니다."
+  }
 }
 
 variable "enable_vault_kms" {

@@ -36,6 +36,26 @@ module "hybrid" {
   tags = { Owner = "heejae" }
 }
 
+# ---------- Edge / DR NLB + Route 53 (희재) ----------
+# DR NLB → VPN → 온프렘 VIP 192.168.24.100:443 (enable_dr_nlb)
+# Route 53 헬스체크·레코드는 route53_routing_mode로 켬. PR #28 리뷰 조건에 따라
+# primary-health·dr-health 호스트(/health/ready)·인증서·라우팅 정책이 준비될 때까지 모든 단계 off.
+# 켤 때 domain_name·hosted_zone_id·primary_lb_dns_name(ROSA LB)을 별도 tfvars PR로 추가
+# (지금 켜면 모듈 validation이 domain_name·hosted_zone_id 누락으로 plan을 중단)
+
+module "edge" {
+  source = "../../modules/edge"
+
+  enable_dr_nlb     = var.enable_dr_nlb
+  vpc_id            = module.network.vpc_id
+  public_subnet_ids = module.network.public_subnet_ids
+
+  enable_route53_routing = var.route53_routing_mode != "off"
+  app_routing_policy     = var.route53_routing_mode == "off" ? "none" : var.route53_routing_mode
+
+  tags = { Owner = "heejae" }
+}
+
 module "rosa" {
   count  = var.enable_rosa ? 1 : 0
   source = "../../modules/rosa"

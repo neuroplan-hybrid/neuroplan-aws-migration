@@ -33,7 +33,10 @@ NeuroPlan 2차: 온프렘 Kubernetes → AWS/ROSA 단계적 하이브리드 마�
 | rds_mode | poc | — | operation | operation |
 | enable_nat | false | false | true | true |
 | enable_dr_nlb | true | true | true | true |
-| enable_route53_routing | false | false | false | true |
+| route53_routing_mode | off | off | off | off |
+
+- `route53_routing_mode`: Route 53 헬스체크·`app` 레코드 스위치. primary-health·dr-health 호스트(`/health/ready`), 인증서, 라우팅 정책이 준비될 때까지 모든 단계 `off` (PR #28 리뷰). 켤 때는 도메인·Hosted Zone·ROSA LB 입력과 함께 별도 tfvars PR
+- 켠 뒤 계획 (B안): 이관·운영 모두 `weighted` — 이관은 가중치 조정, 운영은 ROSA 1 / 온프렘 0 (Weighted 기반 active-passive). `failover`는 모듈 호환용 값으로만 남김
 
 리소스 ON/OFF는 `main.tf` 수정이 아니라 **tfvars 전환**으로 한다.
 
