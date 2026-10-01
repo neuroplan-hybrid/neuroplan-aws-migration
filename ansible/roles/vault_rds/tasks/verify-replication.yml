@@ -1,0 +1,30 @@
+---
+- name: Require a Vault-issued dynamic username for replication verification
+  ansible.builtin.assert:
+    that:
+      - vault_rds_dynamic_username is match('^[A-Za-z0-9_-]+$')
+    fail_msg: "RDS에서 Vault가 발급한 동적 username을 입력하세요. 비밀번호는 이 점검에 필요하지 않습니다."
+
+- name: Confirm dynamic account CREATE USER is present on this On-Prem replica
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --batch
+      - --skip-column-names
+      - --execute
+      - >-
+        SELECT COUNT(*) FROM mysql.user
+        WHERE User = '{{ vault_rds_dynamic_username }}';
+  register: vault_rds_replication_user_count
+  changed_when: false
+
+- name: Require dynamic account DDL replication
+  ansible.builtin.assert:
+    that:
+      - vault_rds_replication_user_count.stdout | trim | int > 0
+    fail_msg: "{{ inventory_hostname }}에 Vault 동적 계정이 없습니다. RDS → On-Prem GTID 상태와 binlog 전파를 확인하세요."
+
+- name: Report dynamic account replication success
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}에서 Vault 동적 계정 {{ vault_rds_dynamic_username }} 전파를 확인했습니다."

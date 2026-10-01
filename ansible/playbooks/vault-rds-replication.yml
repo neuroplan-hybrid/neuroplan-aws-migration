@@ -1,0 +1,11 @@
+---
+- name: Verify Vault dynamic-account DDL reaches On-Prem replicas
+  hosts: onprem_replicas
+  become: true
+  gather_facts: false
+  serial: 1
+  vars:
+    vault_rds_node_role: onprem_replica
+    vault_rds_run_mode: verify-replication
+  roles:
+    - role: vault_rds

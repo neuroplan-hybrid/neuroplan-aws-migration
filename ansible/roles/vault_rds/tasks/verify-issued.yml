@@ -1,0 +1,29 @@
+---
+- name: Require a currently issued Vault credential
+  ansible.builtin.assert:
+    that:
+      - vault_rds_endpoint | length > 0
+      - vault_rds_dynamic_username is match('^[A-Za-z0-9_-]+$')
+      - vault_rds_dynamic_password | length > 0
+    fail_msg: "Vault가 방금 발급한 동적 username/password를 안전한 방식으로 입력하세요."
+  no_log: true
+
+- name: Verify issued dynamic credential can connect and query the application database
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mariadb --protocol=tcp \
+      --host="{{ vault_rds_endpoint }}" --port="{{ vault_rds_port }}" \
+      --user="{{ vault_rds_dynamic_username }}" --password="$VAULT_DYNAMIC_PASSWORD" \
+      --database="{{ vault_rds_database }}" \
+      --execute "SELECT 1 AS vault_dynamic_login_ok;"
+  args:
+    executable: /bin/bash
+  environment:
+    VAULT_DYNAMIC_PASSWORD: "{{ vault_rds_dynamic_password }}"
+  register: vault_rds_issued_login
+  changed_when: false
+  no_log: true
+
+- name: Report successful issued-credential validation
+  ansible.builtin.debug:
+    msg: "Vault 동적 계정 {{ vault_rds_dynamic_username }}의 RDS 접속 및 SELECT 1 검증이 성공했습니다."
