@@ -104,8 +104,8 @@ variable "domain_name" {
   default     = null
 
   validation {
-    condition     = !var.enable_route53_routing || var.domain_name != null
-    error_message = "enable_route53_routing = true면 domain_name이 필요합니다."
+    condition     = !var.enable_route53_routing || try(trimspace(var.domain_name) != "" && trimspace(var.domain_name) == var.domain_name, false)
+    error_message = "enable_route53_routing = true면 domain_name이 필요합니다 (null·빈 문자열·앞뒤 공백 불가)."
   }
 }
 
@@ -115,8 +115,8 @@ variable "hosted_zone_id" {
   default     = null
 
   validation {
-    condition     = !var.enable_route53_routing || var.hosted_zone_id != null
-    error_message = "enable_route53_routing = true면 hosted_zone_id가 필요합니다."
+    condition     = !var.enable_route53_routing || try(trimspace(var.hosted_zone_id) != "" && trimspace(var.hosted_zone_id) == var.hosted_zone_id, false)
+    error_message = "enable_route53_routing = true면 hosted_zone_id가 필요합니다 (null·빈 문자열·앞뒤 공백 불가)."
   }
 }
 
@@ -142,16 +142,26 @@ variable "primary_lb_dns_name" {
   description = "ROSA Ingress LB DNS 이름 (ROSA가 생성). null이면 ROSA 쪽 헬스체크·레코드를 만들지 않음"
   type        = string
   default     = null
+
+  validation {
+    condition     = var.primary_lb_dns_name == null || try(trimspace(var.primary_lb_dns_name) != "" && trimspace(var.primary_lb_dns_name) == var.primary_lb_dns_name, false)
+    error_message = "primary_lb_dns_name은 null 또는 앞뒤 공백 없는 비어 있지 않은 값이어야 합니다."
+  }
 }
 
 variable "primary_lb_zone_id" {
   description = "ROSA Ingress LB의 Alias Hosted Zone ID. null이면 리전 NLB 값 (LB 종류가 NLB가 아니면 지정)"
   type        = string
   default     = null
+
+  validation {
+    condition     = var.primary_lb_zone_id == null || try(trimspace(var.primary_lb_zone_id) != "" && trimspace(var.primary_lb_zone_id) == var.primary_lb_zone_id, false)
+    error_message = "primary_lb_zone_id는 null 또는 앞뒤 공백 없는 비어 있지 않은 값이어야 합니다."
+  }
 }
 
 variable "app_routing_policy" {
-  description = "app 레코드 정책: weighted(이관) / failover(운영) / none(레코드 없음, 정책 전환 중간 단계)"
+  description = "app 레코드 정책: weighted(이관·운영, B안) / failover(모듈 호환용, 사용 계획 없음) / none(레코드 없음)"
   type        = string
   default     = "weighted"
 
@@ -170,7 +180,7 @@ variable "app_routing_policy" {
 }
 
 variable "rosa_weight" {
-  description = "Weighted: ROSA 가중치 (0~255). 시나리오: 0 → 10 → 50"
+  description = "Weighted: ROSA 가중치 (0~255). 전환 검증 0 → 10 → 50, 운영 1"
   type        = number
   default     = 0
 
@@ -181,7 +191,7 @@ variable "rosa_weight" {
 }
 
 variable "onprem_weight" {
-  description = "Weighted: 온프렘(DR NLB) 가중치 (0~255). 시나리오: 100 → 90 → 50"
+  description = "Weighted: 온프렘(DR NLB) 가중치 (0~255). 전환 검증 100 → 90 → 50, 운영 0 (ROSA 레코드가 모두 unhealthy일 때만 응답)"
   type        = number
   default     = 100
 
@@ -215,7 +225,23 @@ variable "health_check_failure_threshold" {
 }
 
 variable "health_check_regions" {
-  description = "헬스체커 리전 (최소 3개). null이면 Route 53 기본값(전체)"
+  description = "헬스체커 리전 (Route 53 헬스체커 리전 중 서로 다른 3개 이상, 서울 ap-northeast-2는 없음). null이면 Route 53 기본값(전체 8개)"
   type        = list(string)
   default     = null
+
+  validation {
+    condition     = var.health_check_regions == null || try(length(distinct(var.health_check_regions)) >= 3, false)
+    error_message = "health_check_regions는 null 또는 서로 다른 리전 3개 이상이어야 합니다 (Route 53 최소 3개)."
+  }
+
+  # Route 53 API HealthCheckConfig.Regions 허용값 — 빈 문자열·공백·오타도 여기서 중단
+  validation {
+    condition = var.health_check_regions == null || try(alltrue([
+      for r in var.health_check_regions : contains([
+        "us-east-1", "us-west-1", "us-west-2", "eu-west-1",
+        "ap-southeast-1", "ap-southeast-2", "ap-northeast-1", "sa-east-1",
+      ], r)
+    ]), false)
+    error_message = "health_check_regions 값은 us-east-1, us-west-1, us-west-2, eu-west-1, ap-southeast-1, ap-southeast-2, ap-northeast-1, sa-east-1 중에서만 고를 수 있습니다."
+  }
 }
