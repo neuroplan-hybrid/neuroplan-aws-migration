@@ -2,7 +2,7 @@
 - name: Require a Vault-issued dynamic username for replication verification
   ansible.builtin.assert:
     that:
-      - vault_rds_dynamic_username is match('^[A-Za-z0-9_]+$')
+      - vault_rds_dynamic_username is match('^[A-Za-z0-9_-]+$')
     fail_msg: "RDS에서 Vault가 발급한 동적 username을 입력하세요. 비밀번호는 이 점검에 필요하지 않습니다."
 
 - name: Confirm dynamic account CREATE USER is present on this On-Prem replica
