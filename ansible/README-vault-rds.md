@@ -13,7 +13,7 @@ Vault 설치 담당자는 아래 값을 Vault 설정에 연결한다.
 | 항목 | 이 초안의 기본값 | Vault 측 연결 값 |
 | --- | --- | --- |
 | Database config 이름 | `rds-mariadb` | `database/config/rds-mariadb` |
-| Backend 쓰기 역할 | `neuroplan-app-rw` | `database/roles/neuroplan-app-rw` |
+| Backend 쓰기 역할 | `neuroplan-backend-rds` | `database/roles/neuroplan-backend-rds` |
 | 읽기 전용 역할 | `neuroplan-app-ro` | `database/roles/neuroplan-app-ro` |
 | TTL PoC 역할 | `neuroplan-poc-ttl-15m` | `database/roles/neuroplan-poc-ttl-15m` |
 | 대상 DB | `infraready` | 생성·권한 SQL의 대상 |
