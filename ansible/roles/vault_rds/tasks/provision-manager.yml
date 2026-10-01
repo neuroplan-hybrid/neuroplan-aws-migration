@@ -1,0 +1,45 @@
+---
+- name: Require explicit approval for Vault management account provisioning
+  ansible.builtin.assert:
+    that:
+      - vault_rds_execute_mutations | bool
+      - vault_rds_provision_approved | bool
+      - vault_rds_manager_password | length > 0
+    fail_msg: "변경 작업은 vault_rds_execute_mutations=true 및 vault_rds_provision_approved=true가 모두 필요합니다."
+  no_log: true
+
+- name: Load RDS Master credentials
+  ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Create the dedicated Vault management account and minimal grants
+  ansible.builtin.shell: |
+    set -euo pipefail
+    manager_password_hex="$(printf '%s' "$VAULT_RDS_MANAGER_PASSWORD" | od -An -tx1 | tr -d '[:space:]')"
+    mariadb --protocol=tcp \
+      --host="{{ vault_rds_endpoint }}" --port="{{ vault_rds_port }}" \
+      --user="{{ vault_rds_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "
+        SET @vault_manager_password = CONVERT(0x${manager_password_hex} USING utf8mb4);
+        SET @vault_create_user_sql = CONCAT(
+          'CREATE USER IF NOT EXISTS \'{{ vault_rds_manager_username }}\'@\'{{ vault_rds_dynamic_host }}\' IDENTIFIED BY ',
+          QUOTE(@vault_manager_password));
+        PREPARE vault_create_user FROM @vault_create_user_sql;
+        EXECUTE vault_create_user;
+        DEALLOCATE PREPARE vault_create_user;
+        GRANT CREATE USER ON *.* TO '{{ vault_rds_manager_username }}'@'{{ vault_rds_dynamic_host }}';
+        GRANT SELECT, INSERT, UPDATE, DELETE ON {{ vault_rds_database }}.* TO '{{ vault_rds_manager_username }}'@'{{ vault_rds_dynamic_host }}' WITH GRANT OPTION;
+        FLUSH PRIVILEGES;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ vault_rds_master_secret.password }}"
+    VAULT_RDS_MANAGER_PASSWORD: "{{ vault_rds_manager_password }}"
+  changed_when: true
+  no_log: true
+
+- name: Display the required Vault Database Secrets Engine grant model
+  ansible.builtin.debug:
+    msg:
+      - "Vault config={{ vault_rds_database_config_name }}, database={{ vault_rds_database }}, manager={{ vault_rds_manager_username }}"
+      - "Dynamic Backend accounts receive SELECT, INSERT, UPDATE, DELETE only on {{ vault_rds_database }}.*."
+      - "Vault installation 담당자가 manager 비밀번호를 Vault database/config에만 저장해야 합니다."
