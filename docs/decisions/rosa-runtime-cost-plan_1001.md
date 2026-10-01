@@ -2,7 +2,17 @@
 
 ## 1. 목적
 
-ROSA HCP 본 구축 전 현재 AWS 리소스 상태를 확인하고, 연휴 기간 불필요한 재구성 없이 비용을 최소화하며, ROSA 유료 가동 기간을 기존 최대 12일보다 짧게 운영하기 위한 기준을 정리한다.
+ROSA HCP 본 구축 전 현재 AWS 리소스 상태를 확인하고, 연휴 및 학원 일정에 맞춰 불필요한 ROSA 유료 가동 시간을 줄이기 위한 운영 기준을 정리한다.
+
+이번 결정의 핵심은 **강사 제공 OCP 환경을 ROSA 대체 환경으로 사용하지 않고, ROSA에 올릴 동일한 OpenShift 배포물을 사전 검증하는 Pre-flight 환경으로 활용**하는 것이다.
+
+목표는 다음과 같다.
+
+- OCP에서 애플리케이션/OpenShift 계층의 오류를 먼저 제거
+- AWS/ROSA 종속 기능은 ROSA에서만 검증
+- OCP용 구현과 ROSA용 구현을 따로 만들어 이중 작업하지 않음
+- 10/9~10/11 학원 방문 불가 기간에는 ROSA를 아직 생성하지 않음
+- ROSA 유료 운영 기간을 10/12 이후로 집중해 `$500` 예산을 안정적으로 관리
 
 ---
 
@@ -56,7 +66,7 @@ aws ec2 describe-addresses \
 
 | 리소스 | 결정 | 사유 |
 |---|---|---|
-| S2S VPN | 유지 | 재생성 시 Outside IP / PSK 변경 가능. 10/6 libreswan 재설정 및 터널 재연결 작업 방지 |
+| S2S VPN | 유지 | 재생성 시 Outside IP / PSK 변경 가능. libreswan 재설정 및 터널 재연결 작업 방지 |
 | DR NLB | 유지 | 재생성 시 DNS 이름 변경. 관련 PR 및 Terraform apply 재작업 방지 |
 | DR NLB Public IPv4 3개 | 유지 | NLB 유지에 따라 함께 유지 |
 | ECR | 유지 | 저장 비용 소액 |
@@ -87,126 +97,336 @@ Infra VM이 OFF이면 다음 상태는 정상이다.
 
 ---
 
-## 4. 10/6 ROSA 시작 전 복구 순서
+## 4. 비용 최적화 전략: OCP Pre-flight 후 ROSA 생성
+
+### 결론
+
+**강사 제공 OCP는 본 구축 환경이 아니라 ROSA 사전 검증 환경으로만 사용한다.**
+
+기존처럼 10/6에 ROSA를 생성해 10/9~10/11까지 유휴 상태로 과금시키지 않고, 10/6~10/8에는 OCP에서 ROSA에 배포할 동일한 애플리케이션/매니페스트를 검증한다.
+
+ROSA는 학원 작업이 재개되는 **10/12에 최초 생성**하는 것을 기본안으로 한다.
+
+### 이 방식을 선택하는 이유
+
+1. 10/9~10/11은 학원 방문이 불가능해 ROSA에서 적극적인 구축/장애 검증을 할 수 없다.
+2. ROSA를 10/6에 생성하면 작업하지 못하는 3일도 계속 과금된다.
+3. OpenShift 공통 영역의 문제를 OCP에서 먼저 제거하면 ROSA 생성 후 디버깅 시간을 줄일 수 있다.
+4. 단, OCP 전용 구성을 따로 만들면 오히려 일정이 늘어나므로 **동일한 base manifest를 재사용**한다.
+
+---
+
+## 5. OCP에서 검증할 범위 / ROSA에서만 검증할 범위
+
+### OCP에서 먼저 검증
+
+| 영역 | OCP 검증 내용 | ROSA에서의 처리 |
+|---|---|---|
+| Deployment | Frontend/Backend Pod 기동, replica, resource 설정 | 동일 manifest 재사용 |
+| Service | Service selector/port 연결 | 동일 manifest 재사용 |
+| Route | OpenShift Route 동작, TLS/host 구조 확인 | ROSA 실제 host로 overlay 변경 |
+| Probe | readiness/liveness 정상 동작 | 동일 설정 최종 확인 |
+| SCC / SecurityContext | OpenShift 권한 및 rootless 실행 가능 여부 | 동일 설정 최종 확인 |
+| ConfigMap/Secret 구조 | key 이름, mount/env 구조 검증 | 실제 값만 ROSA Secret으로 주입 |
+| OpenShift GitOps | Argo CD Application/Sync 구조 | ROSA GitOps에 동일 구조 적용 |
+| 배포 업데이트 | image tag 변경 후 rollout 확인 | ECR image로 최종 확인 |
+| 장애 사전 연습 | Pod 삭제, readiness 실패 배포 | ROSA에서 공식 증적 재측정 |
+
+### ROSA/AWS에서만 검증
+
+다음 항목은 OCP 결과로 대체하지 않는다.
+
+- ROSA HCP 생성 및 MachinePool
+- AWS IAM / STS / ROSA OIDC
+- ECR 실제 Pull 인증
+- RDS MariaDB Multi-AZ
+- On-Prem ↔ RDS GTID 복제 및 Cutover
+- Site-to-Site VPN 실제 경로
+- ROSA Ingress/NLB
+- Route 53 Weighted / Failover
+- ROSA ↔ On-Prem MaxScale 연결
+- RDS Failover / PITR
+- ROSA 전체 진입 장애 → On-Prem DR 전환
+- 실제 RTO/RPO 측정
+
+즉, **OCP 성공 = ROSA 완료가 아니라 OpenShift 공통 계층의 사전 검증 완료**로만 본다.
+
+---
+
+## 6. 이중 작업 방지 원칙
+
+가장 큰 리스크는 OCP에 맞춰 별도 구현한 뒤 다시 ROSA에 맞추는 것이다. 이를 방지하기 위해 아래 원칙을 적용한다.
+
+### 6.1 동일한 Kubernetes/OpenShift base 사용
+
+애플리케이션 저장소에서는 가능하면 다음 구조를 사용한다.
+
+```text
+k8s/
+├── base/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── route.yaml
+│   └── kustomization.yaml
+└── overlays/
+    ├── ocp-preflight/
+    │   └── kustomization.yaml
+    └── rosa/
+        └── kustomization.yaml
+```
+
+`base`에는 공통 리소스를 두고 환경별 차이만 overlay에서 관리한다.
+
+### 6.2 환경별 차이로 허용하는 항목
+
+OCP와 ROSA 사이에서 달라도 되는 것은 최소화한다.
+
+- Route hostname
+- image registry/repository
+- Secret 실제 값
+- StorageClass가 필요한 경우 해당 이름
+- 외부 DB endpoint
+- 환경별 annotation/label
+
+Deployment 구조, Service port, Probe, resource request/limit, replica 정책 등은 가능한 한 동일하게 유지한다.
+
+### 6.3 금지 사항
+
+- OCP 전용 Deployment를 새로 복제해서 관리하지 않음
+- OCP에서만 동작하는 임시 YAML을 본 구축 기준으로 사용하지 않음
+- OCP에서 AWS 네트워크/RDS/Route 53을 흉내 내기 위해 별도 복잡한 구조를 만들지 않음
+- OCP 테스트 자체가 하루 이상 지연되면 기능 범위를 줄이고 ROSA 준비를 우선함
+
+---
+
+## 7. 10/6~10/8 OCP Pre-flight 구체 일정
+
+### 10/6 — OpenShift 기본 호환성 제거
+
+목표: ROSA에서 처음 만날 수 있는 애플리케이션/OpenShift 오류를 미리 제거한다.
+
+작업:
+
+- Namespace 생성
+- Frontend/Backend Deployment 적용
+- Service 연결 확인
+- Route 생성 및 외부 접근 확인
+- readiness/liveness probe 확인
+- SCC / SecurityContext / rootless 실행 확인
+- ConfigMap/Secret 주입 방식 확인
+- Pod restart / reschedule 확인
+
+완료 기준:
+
+```text
+Frontend Pod Ready
+Backend Pod Ready
+Route -> Service -> Pod 정상
+/health/live = 200
+/health/ready = 200
+Pod 재생성 후 서비스 정상
+```
+
+### 10/7 — GitOps / CI-CD 배포 흐름 사전검증
+
+목표: ROSA 생성 후에는 인프라 디버깅보다 AWS 연동 검증에 집중할 수 있도록 배포 계층을 확정한다.
+
+작업:
+
+- OpenShift GitOps/Argo CD Application 구조 검증
+- Git 변경 → Sync → rollout 확인
+- image tag 변경 반영 확인
+- 잘못된 readiness 버전 배포 후 기존 Pod 유지/복구 흐름 확인
+- ROSA overlay와 OCP overlay 차이 최소화
+- 실제 ECR 인증이 필요한 부분은 ROSA TODO로 명확히 분리
+
+완료 기준:
+
+```text
+Git commit
+ -> Argo CD Sync
+ -> Deployment rollout
+ -> /health/ready 200
+```
+
+잘못된 배포 시 기존 정상 서비스가 유지되는 것까지 확인한다.
+
+### 10/8 — ROSA 전환 리허설 및 Go/No-Go
+
+목표: 10/12 ROSA 생성 시 사용할 산출물을 확정한다.
+
+작업:
+
+- ROSA용 Kustomize overlay 최종 검토
+- Route host / Secret / ECR / DB endpoint placeholder 확인
+- ROSA Terraform `plan` 재확인
+- 필요한 Operator 목록 확정
+- 장애 테스트 명령/스크립트 사전 연습
+- 10/12 실행 순서 체크리스트 확정
+
+#### 10/8 Go 조건
+
+아래가 모두 만족되면 10/12 ROSA 생성으로 진행한다.
+
+- 애플리케이션 Pod 정상
+- Probe 정상
+- OpenShift Route 정상
+- GitOps sync 정상
+- 배포 실패 복구 흐름 확인
+- ROSA overlay 준비 완료
+- Terraform plan에 의도하지 않은 destroy 없음
+- ROSA에서만 필요한 AWS 작업 목록이 명확히 분리됨
+
+위 조건을 만족하지 못하면 10/9~10/11 동안 코드/문서 수정 가능한 범위만 보완하고, **ROSA를 미리 켜서 문제를 해결하려 하지 않는다.**
+
+---
+
+## 8. 10/9~10/11 운영 원칙
+
+학원 방문이 불가능하므로 ROSA는 아직 생성하지 않는다.
+
+- OCP 실환경 변경 작업 없음
+- AWS에서는 기존 S2S VPN / DR NLB / ECR / Route 53 / S3 state만 유지
+- RDS / NAT / ROSA는 생성하지 않음
+- Git, Terraform, Manifest, 런북 등 로컬에서 수정 가능한 작업만 수행 가능
+- 10/12 작업 재개 시 Infra VM ON 후 VPN/NLB 상태부터 정상화
+
+이 기간의 목적은 **ROSA 유휴 과금을 없애는 것**이다.
+
+---
+
+## 9. 10/12 이후 ROSA 집중 일정
+
+### 기본안
+
+| 날짜 | ROSA 실작업 Day | 주요 작업 | 완료 기준 |
+|---|---:|---|---|
+| **10/12** | Day 1 | Infra/VPN/NLB 복구 → `rosa-on` plan/apply → ROSA HCP → Operator → 앱/GitOps 배포 | Cluster Ready, App Ready, ECR Pull 정상 |
+| **10/13** | Day 2 | RDS 구축/복제 확인 → ROSA→On-Prem DB → Cutover → Route 53 Failover | RDS Writer 전환, 서비스 정상 |
+| **10/14** | Day 3 | Worker/배포/RDS/VPN/ROSA→DR 장애 테스트, RTO/RPO 측정 | 핵심 장애 시나리오 증적 확보 |
+| **10/15** | Day 4 (예비) | 전체 리허설, 재촬영, 누락 증적 보완 | 완료 즉시 유료 리소스 destroy |
+
+### 10/12 시작 전 체크 순서
 
 ```text
 Infra VM ON
   -> libreswan 확인
   -> S2S VPN Tunnel UP 확인
   -> DR NLB Target healthy 확인
-  -> AWS 리소스 상태 확인
-  -> rosa-on terraform plan
-  -> 검토 후 apply
+  -> AWS 잔존 리소스 확인
+  -> terraform init/plan 확인
+  -> rosa-on terraform apply
+  -> ROSA Ready 확인
+  -> Operator/GitOps/App 배포
 ```
 
-ROSA apply 전에 기존 DR/VPN 경로가 정상 복구된 것을 먼저 확인한다.
+---
+
+## 10. 일정 리스크와 완화책
+
+### 리스크 1. OCP와 ROSA 차이 때문에 다시 수정해야 할 수 있음
+
+완화:
+
+- OCP 검증 범위를 OpenShift 공통 계층으로 제한
+- AWS 연동 기능은 OCP에서 억지로 재현하지 않음
+- 공통 base + 환경별 overlay 사용
+
+### 리스크 2. 10/12~10/15 4일이 너무 짧을 수 있음
+
+완화:
+
+- 10/6~10/8에 앱/GitOps/Probe/SCC 오류를 미리 제거
+- 10/8에 Terraform plan과 ROSA 실행 체크리스트 확정
+- 10/12에는 새로운 설계 결정을 하지 않고 준비한 순서대로 실행
+
+### 리스크 3. OCP 사전검증 자체가 새로운 프로젝트가 될 수 있음
+
+완화:
+
+- OCP에서 새로운 아키텍처를 설계하지 않음
+- OpenShift 호환성 검증이 끝나면 즉시 종료
+- OCP 전용 기능/스토리지/네트워크 튜닝에 시간을 쓰지 않음
+
+### 리스크 4. ROSA에서 예상 밖 AWS/IAM 문제가 발생
+
+완화:
+
+- ROSA Terraform plan, 권한, quota를 10/8 전에 검증
+- ECR/STS/RHCS provider 관련 사전 점검 완료
+- 10/15를 예비일로 남겨둠
 
 ---
 
-## 5. ROSA 유료 가동 기간 재검토
+## 11. 비용 비교
 
-기존 계획은 ROSA를 최대 12일 운영하는 Window로 잡았지만, 12일 전체가 실제 구축 기간은 아니다.
+기존 운영 판단 기준인 ROSA ON 이후 전체 유료 리소스 비용을 약 **하루 $45~50**로 본다. 실제 금액은 Cost Explorer로 검증한다.
 
-또한 실제 학원 작업 가능일은 다음과 같이 끊겨 있다.
+### 기존안: 10/6 ROSA 생성
 
-- **10/6~10/8: 학원 작업 가능**
-- **10/9~10/11: 학원 방문 불가 — 적극적인 구축/변경 작업일에서 제외**
-- **10/12 이후: 학원 작업 재개**
-
-따라서 ROSA 운영 기간은 단순한 연속 `Day 1~7`이 아니라 **실제 작업일(Active Workday)** 과 **과금되는 달력일(Calendar Billing Day)** 을 구분해서 관리한다.
-
-### 운영 기준
-
-- 목표: **실작업 6일**
-- 권장 최대: **실작업 7일**
-- 10/9~10/11은 실작업일에서 제외
-- ROSA를 10/6에 생성한 뒤 유지한다면 10/9~10/11에도 과금은 계속됨
-- ROSA를 중간에 destroy/recreate 하는 방식은 클러스터/Operator/GitOps/Ingress 재구성 리스크가 있으므로 기본안으로 사용하지 않음
-- 실제 Cost Explorer 비용과 진행 상황을 보고 10/12 이후 조기 destroy 여부 판단
-
----
-
-## 6. 현실적인 압축 일정안
-
-### A안 — 10/6에 ROSA 시작 후 10/9~10/11 유지
-
-| 날짜 | 실작업 Day | 주요 작업 | 완료 기준 |
-|---|---:|---|---|
-| **10/6** | Day 1 | Infra/VPN/NLB 복구 확인, ROSA HCP Terraform apply, 필수 Operator 설치 | Cluster Ready, 기본 Operator 정상 |
-| **10/7** | Day 2 | NeuroPlan 배포, GitOps, ECR, CI/CD, ROSA -> On-Prem DB 연결 | 앱 정상, CI/CD 전 구간 검증 |
-| **10/8** | Day 3 | On-Prem -> RDS GTID 복제, Route 53 가중치 테스트, Monitoring | Replication 정상, 10%/50% 전환 검증 |
-| **10/9~10/11** | 제외 | 학원 방문 불가. 적극적인 변경 작업 없음 | 필요 시 상태 확인만 수행 |
-| **10/12** | Day 4 | RDS Cutover, ROSA DB Endpoint 변경, Route 53 Failover 전환 | RDS Writer 전환 및 서비스 정상 |
-| **10/13** | Day 5 | Worker / 배포 / RDS / VPN / ROSA->DR 장애 테스트 | 핵심 장애 시나리오 증적 확보 |
-| **10/14** | Day 6 | 전체 장애 리허설, RTO/RPO 측정, 최종 녹화·증적 | 완료 시 당일 destroy 가능 |
-| **10/15** | Day 7 (예비) | 문제 수정 / 재촬영 / 누락 증적 보완 | 필요할 때만 사용 후 destroy |
-
-### 일정 해석
-
-- **가장 빠른 종료 목표:** 10/14 저녁
-- **예비일까지 사용:** 10/15 저녁
-- 실작업 기준으로는 6~7일이지만, 10/9~10/11 공백 때문에 실제 ROSA 과금 기간은 더 길어진다.
-
----
-
-## 7. 과금일 기준 비용 재산정
-
-초기 운영 예산 기준은 ROSA ON 이후 전체 유료 리소스 약 **하루 $45~50 수준**으로 본다.
-
-10/6에 ROSA를 생성하고 중간에 destroy하지 않는 경우:
-
-| 운영 구간 | 달력 과금일 | 운영비 추정 |
+| 운영 구간 | 달력 과금일 | ROSA ON 이후 운영비 추정 |
 |---|---:|---:|
-| 10/6~10/8 | 3일 | 약 `$135~150` |
-| 10/6~10/12 | 7일 | 약 `$315~350` |
-| **10/6~10/14** | **9일** | **약 `$405~450`** |
-| **10/6~10/15** | **10일** | **약 `$450~500`** |
-| 10/6~10/17 | 12일 | 약 `$540~600` |
+| 10/6~10/14 | 9일 | 약 `$405~450` |
+| 10/6~10/15 | 10일 | 약 `$450~500` |
 
-따라서 현재 일정에서는 단순히 `실작업 6일 = 6일 과금`으로 계산하면 안 된다.
+### 권장안: 10/12 ROSA 생성
 
-### 비용 목표
+| 운영 구간 | 달력 과금일 | ROSA ON 이후 운영비 추정 |
+|---|---:|---:|
+| **10/12~10/14** | **3일** | **약 `$135~150`** |
+| **10/12~10/15** | **4일** | **약 `$180~200`** |
 
-- **1순위:** 10/14까지 핵심 작업·증적 완료 후 destroy
-  - 예상: 약 `$405~450`
-- **2순위:** 문제가 있으면 10/15 예비일 사용 후 destroy
-  - 예상: 약 `$450~500`
-- 10/16 이후까지 ROSA를 유지하는 것은 `$500` 상한 초과 위험이 있으므로 예외 상황으로 취급
+### 예상 절감 효과
 
-> 위 금액은 프로젝트 운영 판단용 추정치이며 실제 과금액은 Cost Explorer로 확인한다.
+- 10/14 종료 기준: 약 **$270~300 절감 가능**
+- 10/15 종료 기준: 약 **$270~300 절감 가능**
+
+이는 ROSA를 켜지 않는 10/6~10/11 구간의 비용을 줄이는 효과가 핵심이다.
+
+> 위 금액은 `ROSA ON 이후 운영비` 추정치다. 9/29~10/1 PoC 비용, 10/2~10/5 연휴 유지비 약 `$8.5`, ECR/Route 53/S3 등 소액 비용은 프로젝트 전체 누적 비용 계산 시 별도로 더한다.
 
 ### 비용 확인 시점
 
-- 10/7: ROSA 생성 후 첫 하루 Cost Explorer 확인
-- 10/8: 연휴 전 누적 비용 및 리소스 상태 확인
-- 10/12: 작업 재개 직후 누적 비용 확인
-- 10/14: 완료 가능 여부 판단 및 destroy 결정
-- 10/15: 예비일 사용 시 반드시 최종 destroy 판단
-- destroy 후: 최종 비용 및 잔존 리소스 확인
+- 10/12: ROSA 생성 직전 현재 누적 비용 캡처
+- 10/13: ROSA 1일 실측 비용 확인
+- 10/14: 누적 비용 + 완료 여부 확인, 가능하면 destroy
+- 10/15: 예비일 사용 시 당일 destroy
+- destroy 후: 잔존 유료 리소스 및 최종 비용 확인
 
 ---
 
-## 8. 10/9~10/11 운영 원칙
+## 12. ROSA 종료 기준
 
-학원 방문이 불가능하므로 이 3일은 **구축 일정에서 제외**한다.
+날짜보다 **완료 조건**을 우선한다.
 
-다만 ROSA를 10/6에 생성하고 유지하는 경우에는 비용이 계속 발생한다.
+아래 증적이 확보되면 ROSA를 계속 유지하지 않는다.
 
-- 적극적인 Terraform apply / DB Cutover / 장애 주입 작업은 하지 않음
-- 가능하면 10/8 퇴실 전 ROSA, RDS, VPN, NLB, Route 53 상태를 정상화하고 변경을 멈춤
-- Infra VM을 켜둘 수 있는 경우 VPN/NLB/복제 상태를 원격 확인
-- Infra VM을 끄는 경우 VPN Tunnel DOWN / DR NLB Target unhealthy는 예상 상태로 취급
-- 10/12 작업 재개 전 VPN / NLB / DB replication / ROSA 상태를 다시 점검
+- ROSA HCP 정상 구축
+- NeuroPlan Frontend/Backend 정상 서비스
+- Jenkins/ECR/GitOps 배포 정상
+- RDS Cutover 및 쓰기 정상
+- Route 53 Failover 구성 정상
+- Worker 장애 복구 증적
+- 잘못된 배포 차단/복구 증적
+- RDS Failover 증적
+- VPN 단일 터널 장애 증적
+- ROSA → On-Prem DR 전환 및 RTO/RPO 측정
+- 필요한 로그/스크린샷/Cost Explorer 캡처 완료
+
+완료되면 **당일 destroy**한다.
 
 ---
 
-## 9. 최종 운영 원칙
+## 13. 최종 운영 원칙
 
-1. 10/2~10/5 연휴에는 VPN / DR NLB를 유지한다.
-2. 10/6 ROSA apply 전에 Infra -> VPN -> NLB 경로를 먼저 정상화한다.
-3. ROSA 실작업 목표는 **6일**, 예비 포함 최대 **7일**로 관리한다.
-4. **10/9~10/11은 학원 방문 불가로 실작업일에서 제외**한다.
-5. 10/6 시작 시 비용 기준 종료 목표는 **10/14**, 최대 **10/15**로 잡는다.
-6. 10/14에 핵심 검증·녹화가 완료되면 즉시 유료 리소스를 destroy한다.
-7. 10/15 예비일까지 사용하면 `$500` 상한에 근접하므로 이후 연장은 원칙적으로 하지 않는다.
-8. 최종 발표 및 보고서에는 `12일`을 최대 유료 Window로 기록하고, 실제 운영은 학원 일정과 비용 최적화를 반영해 조기 종료한 것으로 정리한다.
+1. 10/2~10/5에는 기존 VPN / DR NLB만 유지한다.
+2. **10/6~10/8에는 강사 제공 OCP를 Pre-flight 용도로 활용하고 ROSA는 생성하지 않는다.**
+3. OCP용 별도 구현을 만들지 않고 ROSA와 동일한 OpenShift base를 사용한다.
+4. OCP에서는 앱/GitOps/Route/Probe/SCC 등 OpenShift 공통 계층만 검증한다.
+5. AWS/RDS/VPN/Route 53/ROSA 자체 기능은 ROSA에서 최종 검증한다.
+6. **10/9~10/11에는 ROSA OFF 상태를 유지한다.**
+7. **10/12 ROSA 최초 생성**을 기본안으로 한다.
+8. 10/14 완료를 1순위 목표, 10/15를 예비일로 사용한다.
+9. 핵심 증적 확보 즉시 유료 리소스를 destroy한다.
+10. OCP 검증이 일정 지체 요인이 되면 OCP 범위를 축소하고 ROSA 준비물을 우선한다.
+11. 최종 발표에서는 `비용 절감을 위해 사전 OpenShift 환경에서 애플리케이션 호환성을 검증하고, AWS 종속 검증 시점에만 ROSA HCP를 프로비저닝했다`고 정리한다.
