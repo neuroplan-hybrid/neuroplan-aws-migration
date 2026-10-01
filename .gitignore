@@ -55,5 +55,7 @@ Thumbs.db
 ansible/group_vars/vault.yml
 ansible/inventory/rds-operation.ini
 ansible/group_vars/rds_operation.yml
+ansible/inventory/vault-rds.ini
+ansible/group_vars/vault_rds.yml
 ansible/collections/
 !ansible/roles/jenkins_aws/files/manage_credentials.groovy
