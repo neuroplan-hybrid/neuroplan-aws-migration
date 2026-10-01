@@ -8,7 +8,6 @@ rds_mode               = "operation"
 enable_nat             = true
 enable_dr_nlb          = true
 enable_route53_routing = true
-enable_vault_kms       = true
 
 # 운영 RDS 기본 사양
 # 비용 우선 기본값은 Single-AZ이다. T6 시연·RTO 측정 직전에
