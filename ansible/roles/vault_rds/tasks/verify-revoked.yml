@@ -32,7 +32,7 @@
   changed_when: false
   failed_when: >-
     vault_rds_revoked_login.rc == 0 or
-    (vault_rds_revoked_login.stderr is not search('ERROR 1045|Access denied'))
+    (vault_rds_revoked_login.stderr is not search('ERROR 1045'))
   no_log: true
 
 - name: Report successful TTL revoke validation
