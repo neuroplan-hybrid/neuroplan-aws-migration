@@ -1,13 +1,13 @@
 # 단계: rosa-on
 
-enable_rosa            = true
-enable_ecr             = true
-enable_vpn             = true
-enable_rds             = true
-rds_mode               = "operation"
-enable_nat             = true
-enable_dr_nlb          = true
-enable_route53_routing = false
+enable_rosa          = true
+enable_ecr           = true
+enable_vpn           = true
+enable_rds           = true
+rds_mode             = "operation"
+enable_nat           = true
+enable_dr_nlb        = true
+route53_routing_mode = "off"
 
 # 운영 RDS 기본 사양
 # PoC RDS와 별개로 생성한다. 비용 우선 기본값은 Single-AZ이며,

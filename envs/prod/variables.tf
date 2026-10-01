@@ -40,9 +40,17 @@ variable "enable_dr_nlb" {
   default = true
 }
 
-variable "enable_route53_routing" {
-  type    = bool
-  default = false
+# Route 53 app 레코드 라우팅 (착수 결정사항: 이관 = Weighted, 운영 = Failover / PR #22 결정 B)
+# off = 헬스체크·레코드 없음 / weighted = ROSA·온프렘(DR NLB) 가중치 / failover = Primary ROSA, Secondary DR NLB
+# 현재 4단계 모두 off (PR #28 리뷰 조건). 운영 단계 전환 방식(Weighted 1:0 유지 = B안)은 팀 확정 대기
+variable "route53_routing_mode" {
+  type    = string
+  default = "off"
+
+  validation {
+    condition     = contains(["off", "weighted", "failover"], var.route53_routing_mode)
+    error_message = "route53_routing_mode는 off, weighted, failover 중 하나여야 합니다."
+  }
 }
 
 # AWS

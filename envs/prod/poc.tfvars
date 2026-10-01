@@ -1,12 +1,12 @@
 # 단계: poc
-enable_rosa            = false
-enable_ecr             = true
-enable_vpn             = true
-enable_rds             = true
-rds_mode               = "poc"
-enable_nat             = false
-enable_dr_nlb          = true
-enable_route53_routing = false
+enable_rosa          = false
+enable_ecr           = true
+enable_vpn           = true
+enable_rds           = true
+rds_mode             = "poc"
+enable_nat           = false
+enable_dr_nlb        = true
+route53_routing_mode = "off"
 
 # RDS GTID 복제 PoC
 # DB Subnet Group과 RDS Security Group은 module.network Output으로 연결한다.

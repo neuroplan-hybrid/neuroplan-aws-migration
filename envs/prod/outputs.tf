@@ -43,6 +43,22 @@ output "vpn_tunnel_preshared_keys" {
   sensitive   = true
 }
 
+# ---------- Edge / DR NLB ----------
+output "dr_nlb_dns_name" {
+  description = "DR NLB DNS 이름 (PoC curl --resolve 대상). enable_dr_nlb=false면 null"
+  value       = module.edge.dr_nlb_dns_name
+}
+
+output "dr_target_group_arn" {
+  description = "DR Target Group ARN (aws elbv2 describe-target-health). enable_dr_nlb=false면 null"
+  value       = module.edge.dr_target_group_arn
+}
+
+output "dr_nlb_security_group_id" {
+  description = "DR NLB Security Group ID. enable_dr_nlb=false면 null"
+  value       = module.edge.dr_nlb_security_group_id
+}
+
 # ---------- Data / RDS ----------
 output "rds_endpoint" {
   description = "RDS MariaDB endpoint"
