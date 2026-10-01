@@ -1,0 +1,23 @@
+---
+# 실제 파일명은 vault_rds.yml로 복사한다. 비밀번호·Secret ARN은 Git에 저장하지 않는다.
+
+vault_rds_aws_region: "ap-northeast-2"
+vault_rds_endpoint: ""                    # Terraform output: rds_endpoint
+vault_rds_port: 3306
+vault_rds_master_secret_arn: ""            # Terraform output: master_user_secret_arn
+
+# Vault 설치 담당자와 공유할 Database Secrets Engine 연결 정보
+vault_rds_database_config_name: "rds-mariadb"
+vault_rds_database: "infraready"
+vault_rds_manager_username: "vault_rds_manager"
+vault_rds_manager_password: ""             # Ansible Vault 또는 CI Secret으로만 제공
+vault_rds_dynamic_host: "%"
+
+# Vault가 발급한 계정을 검증할 때 실행 시에만 주입한다.
+vault_rds_dynamic_username: ""
+vault_rds_dynamic_password: ""             # Ansible Vault 또는 CI Secret으로만 제공
+
+# 안전장치: 기본 preflight, 변경은 두 스위치가 모두 true일 때만 허용
+vault_rds_run_mode: "preflight"             # preflight | provision-manager | verify-manager | verify-issued | verify-revoked | verify-replication
+vault_rds_execute_mutations: false
+vault_rds_provision_approved: false
