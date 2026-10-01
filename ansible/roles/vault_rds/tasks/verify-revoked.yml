@@ -8,7 +8,15 @@
     fail_msg: "TTL 만료 또는 Vault revoke 전의 동적 username/password를 안전한 방식으로 입력하세요."
   no_log: true
 
-- name: Confirm revoked dynamic credential can no longer connect
+- name: Verify RDS is reachable before checking credential revocation
+  ansible.builtin.wait_for:
+    host: "{{ vault_rds_endpoint }}"
+    port: "{{ vault_rds_port }}"
+    timeout: 10
+    state: started
+  changed_when: false
+
+- name: Confirm revoked dynamic credential is rejected by RDS authentication
   ansible.builtin.shell: |
     mariadb --protocol=tcp \
       --connect-timeout=5 \
@@ -22,9 +30,11 @@
     VAULT_DYNAMIC_PASSWORD: "{{ vault_rds_dynamic_password }}"
   register: vault_rds_revoked_login
   changed_when: false
-  failed_when: vault_rds_revoked_login.rc == 0
+  failed_when: >-
+    vault_rds_revoked_login.rc == 0 or
+    (vault_rds_revoked_login.stderr is not search('ERROR 1045|Access denied'))
   no_log: true
 
 - name: Report successful TTL revoke validation
   ansible.builtin.debug:
-    msg: "Vault 동적 계정 {{ vault_rds_dynamic_username }}은(는) TTL 만료 또는 revoke 후 RDS 접속이 차단됐습니다."
+    msg: "Vault 동적 계정 {{ vault_rds_dynamic_username }}은(는) TTL 만료 또는 revoke 후 RDS 인증이 거부됨을 확인했습니다."
