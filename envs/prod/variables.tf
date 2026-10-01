@@ -45,6 +45,12 @@ variable "enable_route53_routing" {
   default = false
 }
 
+variable "enable_vault_kms" {
+  description = "Create the AWS KMS key used for Vault auto-unseal"
+  type        = bool
+  default     = false
+}
+
 # AWS
 variable "aws_region" {
   description = "AWS region for NeuroPlan"
