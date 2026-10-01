@@ -104,8 +104,8 @@ variable "domain_name" {
   default     = null
 
   validation {
-    condition     = !var.enable_route53_routing || var.domain_name != null
-    error_message = "enable_route53_routing = true면 domain_name이 필요합니다."
+    condition     = !var.enable_route53_routing || try(trimspace(var.domain_name), "") != ""
+    error_message = "enable_route53_routing = true면 domain_name이 필요합니다 (null·빈 문자열 불가)."
   }
 }
 
@@ -115,8 +115,8 @@ variable "hosted_zone_id" {
   default     = null
 
   validation {
-    condition     = !var.enable_route53_routing || var.hosted_zone_id != null
-    error_message = "enable_route53_routing = true면 hosted_zone_id가 필요합니다."
+    condition     = !var.enable_route53_routing || try(trimspace(var.hosted_zone_id), "") != ""
+    error_message = "enable_route53_routing = true면 hosted_zone_id가 필요합니다 (null·빈 문자열 불가)."
   }
 }
 
@@ -142,12 +142,22 @@ variable "primary_lb_dns_name" {
   description = "ROSA Ingress LB DNS 이름 (ROSA가 생성). null이면 ROSA 쪽 헬스체크·레코드를 만들지 않음"
   type        = string
   default     = null
+
+  validation {
+    condition     = var.primary_lb_dns_name == null || try(trimspace(var.primary_lb_dns_name), "") != ""
+    error_message = "primary_lb_dns_name은 null 또는 비어 있지 않은 값이어야 합니다."
+  }
 }
 
 variable "primary_lb_zone_id" {
   description = "ROSA Ingress LB의 Alias Hosted Zone ID. null이면 리전 NLB 값 (LB 종류가 NLB가 아니면 지정)"
   type        = string
   default     = null
+
+  validation {
+    condition     = var.primary_lb_zone_id == null || try(trimspace(var.primary_lb_zone_id), "") != ""
+    error_message = "primary_lb_zone_id는 null 또는 비어 있지 않은 값이어야 합니다."
+  }
 }
 
 variable "app_routing_policy" {
@@ -218,4 +228,9 @@ variable "health_check_regions" {
   description = "헬스체커 리전 (최소 3개). null이면 Route 53 기본값(전체)"
   type        = list(string)
   default     = null
+
+  validation {
+    condition     = var.health_check_regions == null || try(length(distinct(var.health_check_regions)) >= 3, false)
+    error_message = "health_check_regions는 null 또는 서로 다른 리전 3개 이상이어야 합니다 (Route 53 최소 3개)."
+  }
 }
