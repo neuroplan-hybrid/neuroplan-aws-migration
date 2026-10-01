@@ -3,7 +3,7 @@
   ansible.builtin.assert:
     that:
       - vault_rds_endpoint | length > 0
-      - vault_rds_dynamic_username is match('^[A-Za-z0-9_]+$')
+      - vault_rds_dynamic_username is match('^[A-Za-z0-9_-]+$')
       - vault_rds_dynamic_password | length > 0
     fail_msg: "Vault가 방금 발급한 동적 username/password를 안전한 방식으로 입력하세요."
   no_log: true
