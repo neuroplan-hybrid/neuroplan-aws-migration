@@ -12,7 +12,8 @@ ROSA HCP 본 구축 전 현재 AWS 리소스 상태를 확인하고, 연휴 및 
 - AWS/ROSA 종속 기능은 ROSA에서만 최종 검증
 - OCP용 구현과 ROSA용 구현을 따로 만들어 이중 작업하지 않음
 - 10/9~10/11 학원 방문 불가 기간에는 ROSA/RDS/NAT를 생성하지 않음
-- ROSA 유료 운영 기간을 10/12 이후로 집중
+- ROSA 유료 운영 기간을 **10/12~10/16 5일**로 집중
+- 10/16(금) 당일 destroy를 원칙으로 하고 주말 연장은 하지 않음
 - 프로젝트 전체 예산 `$500`을 Cost Explorer 실측 기준으로 관리
 
 ---
@@ -99,14 +100,17 @@ Infra VM이 OFF이면 아래 상태는 정상이다.
 
 10/6~10/8에는 OCP에서 ROSA에 배포할 동일한 애플리케이션/매니페스트를 검증하고, ROSA와 운영 RDS는 학원 작업이 재개되는 **10/12에 최초 생성**한다.
 
-이 방식으로 10/9~10/11의 ROSA/RDS/NAT 유휴 과금을 제거한다.
+ROSA는 **10/12~10/16 5일 연속 운영**하며, 하루에 한 단계씩 `생성 → 통합 검증 → 전환 사전검증 → Cutover → DR/종료` 순서로 진행한다.
+
+10/16(금) 당일 destroy를 원칙으로 하며, 주말 유휴 과금을 피하기 위해 10/17 이후로 연장하지 않는다.
 
 ### 선택 이유
 
 1. 10/9~10/11은 학원 방문이 불가능해 적극적인 구축·Cutover·장애 검증을 할 수 없다.
-2. ROSA를 10/6에 생성하면 작업하지 못하는 3일도 계속 과금된다.
-3. OpenShift 공통 영역의 문제를 OCP에서 먼저 제거하면 ROSA 생성 후 디버깅 시간을 줄일 수 있다.
-4. OCP 전용 구성을 만들지 않고 동일한 base manifest를 사용하면 재작업을 최소화할 수 있다.
+2. ROSA를 10/6~10/8에 미리 생성하면 작업하지 못하는 3일도 계속 과금된다.
+3. 10/12~10/16을 5일 연속으로 사용하면 생성·통합·전환·Cutover·DR을 하루씩 분리할 수 있다.
+4. OpenShift 공통 영역의 문제를 OCP에서 먼저 제거하면 ROSA 생성 후 디버깅 시간을 줄일 수 있다.
+5. OCP 전용 구성을 만들지 않고 동일한 base manifest를 사용하면 재작업을 최소화할 수 있다.
 
 ---
 
@@ -293,7 +297,7 @@ GitOps Operator 설치 권한이 없는 경우 해당 제약을 기록하고, Ap
 - Route 53 Weighted 전환 선행조건 준비 여부 확인
 - ROSA에서만 필요한 AWS 작업 목록이 명확히 분리됨
 
-위 조건을 만족하지 못하면 10/9~10/11 동안 코드/문서 수정 가능한 범위만 보완하고, ROSA를 미리 생성해서 문제를 해결하지 않는다.
+위 조건을 만족하지 못하면 10/9~10/11 동안 가능한 문서/코드 보완만 진행하고, ROSA를 미리 생성해서 문제를 해결하지 않는다.
 
 ---
 
@@ -304,24 +308,25 @@ GitOps Operator 설치 권한이 없는 경우 해당 제약을 기록하고, Ap
 - OCP 실환경 변경 작업 없음
 - AWS에서는 기존 S2S VPN / DR NLB / ECR / Route 53 / S3 state만 유지
 - RDS / NAT / ROSA는 생성하지 않음
-- Git, Terraform, Manifest, Runbook 등 로컬에서 수정 가능한 작업만 수행
 - 10/12 작업 재개 시 Infra VM ON 후 VPN/NLB 상태부터 정상화
 
 따라서 이 기간에는 ROSA 앱 → On-Prem DB 연결 또는 On-Prem → 운영 RDS 복제가 존재하지 않으며, 해당 연결의 3일 중단 문제도 발생하지 않는다.
 
 ---
 
-## 9. 10/12 이후 ROSA 집중 일정
+## 9. 10/12~10/16 ROSA 5일 집중 일정
 
-### 9.1 기본 일정
+### 9.1 확정 일정
 
 | 날짜 | 실작업 Day | 주요 작업 | 완료 기준 |
 |---|---:|---|---|
-| **10/12** | Day 1 | Infra/VPN/NLB 복구 → `rosa-on` plan/apply → ROSA HCP + 운영 RDS + NAT 생성 → Operator/GitOps/App 배포 → DB Import/복제 착수 | Cluster Ready, App Ready, ECR Pull 정상, **RDS Available, Endpoint 확인, Master Secret ARN 확인** |
-| **10/13** | Day 2 | Import 및 On-Prem→RDS GTID catch-up 확인 → Route 53 Weighted `10/90 → 50/50` 전환 검증 및 측정 → DB Cutover → RDS→On-Prem 역방향 GTID 구성 → 운영 가중치 `ROSA 1 / On-Prem 0` | RDS Writer 정상, `db-primary`/`db-replica` IO·SQL Running, Replication Lag 정상, 서비스 정상 |
-| **10/14** | Day 3 | DR 선행조건 재확인 → Worker/배포/VPN/ROSA→On-Prem DR 장애 테스트 → RTO/RPO 측정 → 증적 수집 | 핵심 장애 시나리오 및 Route 53 Weighted(1/0)+Health Check 기반 DR 전환 증적 확보 |
-| **10/15** | Day 4 (예비) | Cost Explorer 기준 예산 여유가 있을 때만 리허설/재촬영/누락 증적 보완 | 완료 즉시 유료 리소스 destroy |
-| **10/16** | 예외 연장 | 10/14 비용·진척 조건을 만족하고 핵심 증적이 남아 있을 때만 사용 | 당일 완료/destroy 원칙 |
+| **10/12 (월)** | Day 1 생성 | Infra/VPN/NLB 점검 → `rosa-on` plan/apply → ROSA HCP + Worker + 운영 RDS + NAT 생성 → IAM/STS/OIDC 확인 → Operator/GitOps/첫 배포 → NFS 논리백업 Import·초기 GTID 복제 착수 | Cluster/Worker Ready, RDS Available, Endpoint·Master Secret ARN 확인, 첫 App 배포 및 ECR Pull 정상, Import/초기 복제 착수 |
+| **10/13 (화)** | Day 2 통합 검증 | ECR Pull, 실제 NeuroPlan App, Route/Probe/Secret, RDS 연결, VPN 경로 검증 → ROSA Ingress LB 확인 → Route 53 tfvars PR/apply → 초기 On-Prem 100 / ROSA 0 및 양쪽 Health Check 정상 확인 | 앱/RDS/VPN 정상, Route 53 초기 상태와 Health Check 2개 정상 |
+| **10/14 (수)** | Day 3 전환 사전검증 | Import 마무리 → On-Prem→RDS GTID catch-up·Lag 확인 → Route 53 Weighted `10/90 → 50/50` 전환 검증 및 측정 | GTID/Lag 정상, 10/90·50/50 측정 결과 및 Health Check 정상 |
+| **10/15 (목)** | Day 4 Cutover | 점검 모드 → DB Cutover → RDS Writer → 앱 RDS Endpoint/Write 검증 → RDS→On-Prem `db-primary`·`db-replica` 역복제 → IO/SQL Running·Lag 확인 → 운영 `ROSA 1 / On-Prem 0` 적용 | RDS Writer/앱 Write 정상, 두 역복제 정상, 운영 1/0 및 Health Check 정상 |
+| **10/16 (금)** | Day 5 DR·종료 | DR 선행조건 확인 → Worker/배포/VPN/DR 장애 테스트 → RTO/RPO 측정 → 녹화·스크린샷·GTID·복제·Cost Explorer 증적 저장 → **18:00 Terraform destroy** | 필수 증적 저장, 유료 리소스 destroy, 잔존 리소스 확인 |
+
+**10/16은 종료일이다. 주말 연장은 하지 않는다.** 미완료 항목이 있으면 10/15 저녁에 우선순위를 정하고, 10/16에는 필수 증적을 우선 확보한 뒤 destroy한다.
 
 ### 9.2 10/12 `rosa-on` 완료 조건
 
@@ -333,8 +338,9 @@ ROSA Worker Ready
 운영 RDS Available
 RDS Endpoint 확인
 RDS Master Secret ARN 확인
+IAM / STS / OIDC 확인
 Operator / GitOps 준비
-Frontend / Backend Ready
+Frontend / Backend 첫 배포
 ECR Pull 정상
 DB Import 또는 Initial Replication 착수
 ```
@@ -343,9 +349,24 @@ DB Import 또는 Initial Replication 착수
 
 Multi-AZ는 T6 RDS Failover 시연이 실제로 필요하고 팀이 비용 증가를 승인한 경우에만 별도 변경한다.
 
-### 9.3 10/13 데이터 전환 순서
+### 9.3 10/13 Route 53 완료 조건
 
-10/13 작업은 아래 순서를 지킨다.
+ROSA Ingress가 확인되는 즉시 Route 53 초기 상태를 구성한다.
+
+```text
+1. ROSA Ingress LB 종류 확인
+2. ROSA LB DNS 확인
+3. NLB가 아니면 primary_lb_zone_id 입력
+4. Route 53 tfvars PR 작성 / 리뷰 / Merge
+5. 지정 실행자 plan / apply
+6. Weighted On-Prem 100 / ROSA 0 확인
+7. primary-health / dr-health Health Check 정상 확인
+8. app.neuroplan.cloud 응답이 초기 On-Prem 경로인지 확인
+```
+
+이 단계는 **10/14 Weighted 10/90 → 50/50 전환 전 완료**한다.
+
+### 9.4 10/14 전환 사전검증 순서
 
 ```text
 1. Import 완료 확인
@@ -354,18 +375,27 @@ Multi-AZ는 T6 RDS Failover 시연이 실제로 필요하고 팀이 비용 증�
 4. Route 53 Weighted 10/90 전환 검증
 5. 측정 스크립트 연속 실행
 6. Route 53 Weighted 50/50 전환 검증
-7. DB Cutover -> RDS Writer 전환
-8. 애플리케이션 RDS Endpoint 적용 및 Write 검증
-9. RDS -> On-Prem db-primary GTID Replica 구성
-10. RDS -> On-Prem db-replica GTID Replica 구성
-11. 두 Replica IO/SQL Running 및 Lag 확인
-12. Route 53 운영 가중치 ROSA 1 / On-Prem 0 적용
-13. 양쪽 Health Check 정상 확인
+7. Health Check 및 측정 결과 정리
 ```
 
-**10/14 DR 테스트는 9~11번 완료 전에는 시작하지 않는다.**
+### 9.5 10/15 Cutover 순서
 
-### 9.4 10/12 시작 전 체크 순서
+```text
+1. 점검 모드 진입
+2. DB Cutover -> RDS Writer 전환
+3. 애플리케이션 RDS Endpoint 적용
+4. 애플리케이션 Write 검증
+5. RDS -> On-Prem db-primary GTID Replica 구성
+6. RDS -> On-Prem db-replica GTID Replica 구성
+7. 두 Replica IO/SQL Running 및 Lag 확인
+8. Route 53 운영 가중치 ROSA 1 / On-Prem 0 적용
+9. 양쪽 Health Check 정상 확인
+10. 10/16 DR 선행조건 충족 여부 확인
+```
+
+**10/16 DR 테스트는 5~9번 완료 전에는 시작하지 않는다.**
+
+### 9.6 10/12 시작 전 체크 순서
 
 ```text
 Infra VM ON
@@ -388,13 +418,15 @@ Infra VM ON
 - OCP 검증 범위를 OpenShift 공통 계층으로 제한
 - AWS 연동 기능은 OCP에서 억지로 재현하지 않음
 - 공통 base + 환경별 overlay 사용
-- OCP/ROSA OpenShift 버전 차이를 10/6에 기록
+- OCP/ROSA OpenShift 버전 차이를 기록
 
-### 리스크 2. 10/12~10/15 일정 압축
+### 리스크 2. 5일 일정 지연
 
 - 10/6~10/8에 앱/GitOps/Probe/SCC 오류를 미리 제거
 - 10/8에 Terraform plan, Route 53 절차, DB Runbook 확정
-- 10/12에는 새로운 설계 결정을 하지 않고 준비한 순서대로 실행
+- 하루 한 단계 원칙으로 생성·통합·전환·Cutover·DR을 분리
+- 10/15 저녁에 진척과 비용을 함께 판단하고 10/16 필수 증적 우선순위를 확정
+- 10/16 당일 destroy, 주말 연장 없음
 
 ### 리스크 3. OCP 권한 부족
 
@@ -402,16 +434,16 @@ Infra VM ON
 - 권한이 없으면 Operator 설치에 시간을 소모하지 않고 manifest/rollout 검증으로 범위 축소
 - 공용 OCP에는 실제 AWS/DB Secret을 넣지 않음
 
-### 리스크 4. 10/13 작업 과밀
+### 리스크 4. 10/12 초기 구축 지연
 
-- 10/8까지 Route 53 선행조건과 측정 스크립트를 준비
-- 10/12 RDS 생성 직후 Import/Initial Replication을 시작
-- 10/13에는 새 설계가 아니라 복제 catch-up, 전환, 역복제 검증에 집중
+- HCP/RDS 생성 후 바로 Operator/GitOps/첫 배포와 DB Import를 시작
+- 10/13에는 통합 검증과 Route 53 초기 상태 구성에 집중
+- 10/14 전환 검증 전에 앱/RDS/VPN/Health Check 문제를 먼저 제거
 
 ### 리스크 5. ROSA/AWS IAM 문제
 
 - Terraform plan, quota, RHCS provider, STS/ECR 사전 점검
-- 비용 조건 충족 시 10/15 예비일 사용
+- 10/12 Day 1에 IAM/STS/OIDC를 최우선 확인
 
 ---
 
@@ -438,51 +470,52 @@ Infra VM ON
 
 이 값은 추정치이며 **10/12 ROSA Apply 직전 Cost Explorer 실제 누적액으로 대체**한다.
 
-### 11.3 운영 기간별 추정
+### 11.3 5일 운영 추정
 
 | 운영 구간 | ROSA ON 기간 | ROSA ON 이후 추정 | ROSA 이전 `$13~15` 포함 누적 추정 |
 |---|---:|---:|---:|
-| 10/12~10/14 | 3일 | `$135~150` | **`$148~165`** |
-| 10/12~10/15 | 4일 | `$180~200` | **`$193~215`** |
-| 10/12~10/16 | 5일 | `$225~250` | **`$238~265`** |
+| **10/12~10/16** | **5일** | **`$225~250`** | **`$238~265`** |
 
 > 실제 비용은 Worker 타입, ROSA 서비스 요금, EBS, 데이터 처리량, NAT, NLB, VPN, RDS 사용 시간에 따라 달라진다.
 
-### 11.4 예산 중단/연장 기준
+### 11.4 예산 중단 기준
 
 예산 상한은 `$500`이며, 최소 `$20`의 안전 여유를 둔다.
 
 - **10/12 ROSA Apply 전**
   - Cost Explorer 프로젝트 누적액 확인
-  - 누적액이 **`$280 이하`**이면 10/15 예비일까지 운영 가능한 것으로 판단
-  - `$280 초과`이면 10/15 사용을 자동 전제로 두지 않고 당일 팀 재승인
-  - 근거: 4일 최대 추정 `$200` + 안전 여유 `$20`
+  - 누적액이 **`$230 이하`**이면 5일 운영 가능
+  - 근거: 5일 최대 추정 `$250` + 안전 여유 `$20`
+  - `$230 초과`이면 Apply 전 팀 재판단
 
-- **10/14 작업 종료 시**
-  - 핵심 증적 완료 → 즉시 destroy
-  - 핵심 증적 미완료이고 누적액이 **`$430 이하`**이면 10/15 1일 예비 사용 가능
-  - 10/16까지 예외 연장이 필요하면 10/14 누적액이 **`$380 이하`**일 때만 검토
-  - 근거: 추가 2일 최대 추정 `$100` + 안전 여유 `$20`
+- **10/15 저녁**
+  - 누적액이 **`$430 이하`**이면 10/16 Day 5 진행
+  - 근거: 1일 최대 추정 `$50` + 안전 여유 `$20`
+  - 미완료 항목이 있으면 10/16에 필요한 증적의 우선순위를 정함
 
 - **Hard Stop**
-  - Cost Explorer 누적 또는 예상 총액이 **`$480 이상`**이면 추가 연장 금지
-  - 필수 증적만 확보하고 유료 리소스 destroy 우선
+  - Cost Explorer 누적 또는 예상 총액이 **`$480 이상`**이면 추가 작업을 중단하고 필수 증적 확보 후 destroy 우선
+
+- **주말 연장 금지**
+  - 10/16(금) destroy가 원칙
+  - 10/17~10/18 ROSA/RDS/NAT 유휴 과금이 발생하지 않도록 한다.
 
 ### 11.5 비용 확인 시점
 
 - 10/12: ROSA 생성 직전 기존 누적 비용 캡처
 - 10/13: ROSA 첫 1일 실측 확인 및 일일 추정치 보정
-- 10/14: 누적 비용 + 완료 여부 확인, 가능하면 destroy
-- 10/15: 예비일 사용 시 비용 재확인 후 당일 destroy
-- destroy 후: 잔존 유료 리소스 및 최종 비용 확인
+- 10/14: 전환 검증 후 누적 비용 확인
+- 10/15: Cutover 후 누적 비용 및 10/16 진행 조건 확인
+- 10/16: DR/증적 완료 후 Cost Explorer 캡처 → 당일 destroy
+- destroy 다음 날 이후: 잔존 유료 리소스 및 최종 비용 재확인
+
+Cost Explorer는 최대 하루 늦게 반영될 수 있으므로 화면 값에 당일 사용분 약 `$45~50`을 더해 판단한다.
 
 ---
 
 ## 12. ROSA 종료 기준
 
-날짜보다 완료 조건을 우선한다.
-
-아래 증적이 확보되면 ROSA를 계속 유지하지 않는다.
+아래 증적을 10/16까지 우선 확보한다.
 
 - ROSA HCP 정상 구축
 - NeuroPlan Frontend/Backend 정상 서비스
@@ -501,7 +534,7 @@ Infra VM ON
 - T6 Multi-AZ 시연을 승인한 경우에만 RDS Failover 증적
 - 필요한 로그/스크린샷/Cost Explorer 캡처 완료
 
-완료되면 **당일 destroy**한다.
+**10/16은 종료일이다.** 미완료 증적이 있어도 필수 항목을 우선 확보하고 당일 Terraform destroy를 진행한다. 주말 연장은 하지 않는다.
 
 ---
 
@@ -513,11 +546,13 @@ Infra VM ON
 4. 공용 OCP 사용 전 권한, GitOps Operator, 이미지 소스, 버전 차이, Secret 사용 원칙을 먼저 확인한다.
 5. OCP에서는 앱/GitOps/Route/Probe/SCC 등 OpenShift 공통 계층만 검증한다.
 6. **10/9~10/11에는 ROSA/RDS/NAT OFF 상태를 유지한다.**
-7. **10/12 `rosa-on` Apply에서 ROSA HCP와 운영 RDS를 함께 생성**한다.
+7. **10/12 `rosa-on` Apply에서 ROSA HCP와 운영 RDS를 함께 생성**하고 첫 배포와 DB Import/초기 복제까지 착수한다.
 8. 운영 RDS는 **Single-AZ 기본**이며 Multi-AZ는 T6 시연 승인 시에만 전환한다.
-9. Route 53 운영 정책은 **Weighted 기반 active-passive**로 통일한다. Failover Routing Policy로 전환하지 않는다.
-10. 10/13 Cutover 후 RDS → On-Prem 역방향 GTID 복제를 정상화한 뒤에만 10/14 DR 테스트를 시작한다.
-11. 10/14 완료를 1순위 목표로 하고 10/15는 Cost Explorer 예산 조건을 만족할 때만 사용한다.
-12. 필요 시 10/16 연장은 10/14 누적 비용과 미완료 증적을 기준으로 예외 승인한다.
-13. 핵심 증적 확보 즉시 유료 리소스를 destroy한다.
-14. 최종 발표에서는 `비용 절감을 위해 사전 OpenShift 환경에서 애플리케이션 호환성을 검증하고, AWS 종속 검증 시점에만 ROSA HCP를 프로비저닝했다`고 정리한다.
+9. **10/13에는 통합 검증과 Route 53 초기 On-Prem 100 / ROSA 0 상태, 양쪽 Health Check 정상까지 완료**한다.
+10. **10/14에는 GTID catch-up 후 Weighted 10/90 → 50/50 전환 검증과 측정을 완료**한다.
+11. **10/15에는 DB Cutover, RDS → On-Prem 역방향 GTID 복제, 운영 ROSA 1 / On-Prem 0 적용을 완료**한다.
+12. **10/16에는 DR/RTO/RPO/녹화·증적을 확보하고 당일 Terraform destroy**한다.
+13. 10/16 이후 주말 연장은 하지 않는다.
+14. 비용 기준은 10/12 Apply 전 `$230 이하`, 10/15 저녁 `$430 이하`, `$480` Hard Stop으로 관리한다.
+15. Route 53 운영 정책은 **Weighted 기반 active-passive**로 통일하며 Failover Routing Policy로 전환하지 않는다.
+16. 최종 발표에서는 `비용 절감을 위해 사전 OpenShift 환경에서 애플리케이션 호환성을 검증하고, AWS 종속 검증 시점에만 ROSA HCP를 프로비저닝했다`고 정리한다.
