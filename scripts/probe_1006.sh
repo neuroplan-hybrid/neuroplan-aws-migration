@@ -3,8 +3,11 @@
 #
 # 주 증거는 k6(로그인 → 조회 → 저장), 이 스크립트는 DNS 전환 시각과 사이트별 헬스를 1초 단위로 남기는 보조
 # 실행 위치: 리눅스 (DevOps VM heejae 등, root 불필요). 필요 명령: dig, curl, awk, date
-#   bash probe_1006.sh run                 # Ctrl+C까지 1초마다 기록 → probe_<MMDD-HHMM>.csv
-#   bash probe_1006.sh run 300             # 300초만 기록
+# LB DNS는 고정값 없음 — 실행할 때마다 최신 Terraform Output을 넘긴다 (NLB 재생성 시 이전 NLB 측정 방지, #50 리뷰)
+#   DR_NLB_DNS="$(cd envs/prod && terraform output -raw dr_nlb_dns_name)" \
+#   ROSA_LB_DNS="<ROSA Ingress LB DNS, 10/13 이후>" \
+#   bash scripts/probe_1006.sh run         # Ctrl+C까지 1초마다 기록 → probe_<MMDD-HHMM>.csv
+#   (같은 변수로) bash scripts/probe_1006.sh run 300   # 300초만 기록
 #   bash probe_1006.sh summary <csv> [T0]  # 요약. T0(HH:MM:SS, 장애 주입 시각)를 주면 Control/User RTO 계산
 #
 # 매초 기록 (병렬 실행, 요청마다 타임아웃 → 한 줄이 1초를 넘지 않게)
@@ -24,13 +27,20 @@ APP_PATH="${APP_PATH:-/}"
 HC_PATH="${HC_PATH:-/actuator/health/routing}"
 DR_HEALTH="${DR_HEALTH:-dr-health.${DOMAIN}}"
 ROSA_HEALTH="${ROSA_HEALTH:-primary-health.${DOMAIN}}"
-DR_NLB_DNS="${DR_NLB_DNS:-neuroplan-dr-nlb-450961729f2f0929.elb.ap-northeast-2.amazonaws.com}"
+DR_NLB_DNS="${DR_NLB_DNS:-}"            # 필수: terraform output -raw dr_nlb_dns_name
 ROSA_LB_DNS="${ROSA_LB_DNS:-}"          # 10/13 ROSA Ingress LB DNS (비어 있으면 rosa 열은 "-")
 TIMEOUT="${TIMEOUT:-0.9}"
 OUT_DIR="${OUT_DIR:-.}"
 
 usage() { echo "사용법: bash $0 run [초] | summary <csv> [T0 HH:MM:SS]" >&2; exit 1; }
 
+check_lb() {  # $1 변수 이름, $2 값, $3 required|optional → 비었거나 ELB DNS 형식이 아니면 중단
+    if [[ -z "$2" ]]; then
+        [[ "$3" == required ]] || return 0
+        echo "$1 필수 — 예: $1=\"\$(cd envs/prod && terraform output -raw dr_nlb_dns_name)\" bash $0 run" >&2; exit 1
+    fi
+    [[ "$2" =~ ^[A-Za-z0-9.-]+\.elb\.([a-z0-9-]+\.)?amazonaws\.com$ ]] || { echo "$1 형식 이상: '$2' (ELB DNS 이름이어야 함, terraform output이 null인지 확인)" >&2; exit 1; }
+}
 lb_ips() { [[ -n "$1" ]] && dig +short +time=1 +tries=1 "$1" A 2>/dev/null | grep -E '^[0-9.]+$' | sort | paste -sd' '; }
 site_of() {  # $1 IP 목록(공백) → onprem/rosa/unknown/-
     local ips="$1" ip
@@ -52,13 +62,17 @@ http() {  # $1 URL, $2 추가 curl 인자(문자열) → "code ms"
 do_run() {
     local limit="${1:-0}" ns csv n=0 next t0 c
     for c in dig curl getent awk date; do command -v "$c" >/dev/null || { echo "$c 없음" >&2; exit 1; }; done
+    check_lb DR_NLB_DNS "$DR_NLB_DNS" required
+    check_lb ROSA_LB_DNS "$ROSA_LB_DNS" optional
+    DR_IPS="$(lb_ips "$DR_NLB_DNS")"; ROSA_IPS="$(lb_ips "$ROSA_LB_DNS")"
+    [[ -n "$DR_IPS" ]] || { echo "DR_NLB_DNS 조회 결과 IP 없음 (${DR_NLB_DNS}) → 삭제·교체된 NLB일 수 있음, terraform output 다시 확인" >&2; exit 1; }
+    echo "측정 대상: DR NLB ${DR_NLB_DNS} (${DR_IPS}) / ROSA LB ${ROSA_LB_DNS:-미지정} ${ROSA_IPS:+(${ROSA_IPS})}" >&2
     ns="$(dig +short NS "$DOMAIN" @8.8.8.8 2>/dev/null | head -1)"
     [[ -n "$ns" ]] || { echo "권한 NS 조회 실패 (${DOMAIN})" >&2; exit 1; }
     csv="${OUT_DIR}/probe_$(date +%m%d-%H%M).csv"
     echo "ts,epoch_ms,ip_auth,site_auth,ip_user,site_user,app_code,app_ms,dr_code,dr_ms,rosa_code,rosa_ms,write_code,write_seq,write_ms" > "$csv"
     echo "기록 시작: ${csv} (권한 NS ${ns%.}, app https://${APP_HOST}${APP_PATH}, HC ${HC_PATH}) — Ctrl+C로 종료" >&2
     trap 'echo; echo "종료: ${csv} (${n}줄)" >&2; exit 0' INT TERM
-    DR_IPS="$(lb_ips "$DR_NLB_DNS")"; ROSA_IPS="$(lb_ips "$ROSA_LB_DNS")"
     next=$(date +%s)
     while :; do
         if (( n % 60 == 0 && n > 0 )); then DR_IPS="$(lb_ips "$DR_NLB_DNS")"; ROSA_IPS="$(lb_ips "$ROSA_LB_DNS")"; fi
