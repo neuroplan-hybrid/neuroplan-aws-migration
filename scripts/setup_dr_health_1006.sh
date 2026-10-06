@@ -256,7 +256,7 @@ phase_verify() {
     log "  /actuator                        : $(sni_code /actuator)   (기대 404)"
     log "  /api                             : $(sni_code /api)   (기대 404)"
     log "인증서 (SNI ${DR_HOST}):"
-    openssl s_client -connect "${VERIFY_IP}:${VERIFY_PORT}" -servername "$DR_HOST" </dev/null 2>/dev/null \
+    timeout 10 openssl s_client -connect "${VERIFY_IP}:${VERIFY_PORT}" -servername "$DR_HOST" </dev/null 2>/dev/null \
         | openssl x509 -noout -subject -issuer -enddate 2>/dev/null || log "  인증서 조회 실패"
 }
 
