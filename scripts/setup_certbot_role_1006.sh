@@ -10,6 +10,8 @@
 #   create   Role + inline 정책 생성, ~/.aws/config에 프로필 certbot-dns01 추가
 #   verify   읽기 + 테스트 레코드: assume 확인 → 허용 레코드(_acme-challenge.dr-health TXT) UPSERT·DELETE 성공
 #            → 비허용 레코드(_denied-test TXT) UPSERT 거부(AccessDenied) 확인. --apply일 때만 레코드 변경 시도
+#            안전장치 (PR #41 리뷰): ① 시작 전 SOURCE_PROFILE로 두 테스트 이름에 기존 TXT가 있는지 확인 → 있으면 변경 없이 중단
+#            ② 허용 TXT UPSERT 성공 직후 trap 등록 → 중간 실패·Ctrl+C·종료 시에도 테스트 TXT DELETE 시도, 정상 DELETE 후 trap 해제
 #   cleanup  inline 정책·Role 삭제, 프로필 제거 → get-role NoSuchEntity 확인 (두 인증서 배포·검증 후)
 #
 # 권한 정책 (Action마다 Resource 분리 — 한 ARN에 묶으면 GetChange·ListHostedZones 실패, 정현 조건 1)
@@ -139,6 +141,29 @@ change_txt() {  # $1 action, $2 name → change id 또는 에러 메시지
     aws route53 change-resource-record-sets --profile "$PROFILE" --hosted-zone-id "$ZONE_ID" \
         --change-batch "$batch" --query ChangeInfo.Id --output text 2>&1
 }
+txt_exists() {  # $1 name → 기존 TXT RRset 수 (SOURCE_PROFILE, 읽기만)
+    aws route53 list-resource-record-sets --profile "$SOURCE_PROFILE" --hosted-zone-id "$ZONE_ID" \
+        --start-record-name "$1" --start-record-type TXT --max-items 1 \
+        --query "length(ResourceRecordSets[?Name=='${1}.' && Type=='TXT'])" --output text
+}
+TEST_TXT_PENDING=0
+cleanup_test_txt() {  # trap: 테스트 TXT가 남았을 수 있으면 삭제 시도 (Role → 실패 시 SOURCE_PROFILE)
+    local rc=$?
+    trap - EXIT INT TERM
+    if [[ $TEST_TXT_PENDING -eq 1 ]]; then
+        log "중단 감지 → 테스트 TXT ${TEST_OK} 삭제 시도"
+        local out
+        out="$(change_txt DELETE "$TEST_OK")" || true
+        if [[ "$out" != /change/* ]]; then
+            out="$(PROFILE="$SOURCE_PROFILE" change_txt DELETE "$TEST_OK")" || true
+        fi
+        if [[ "$out" == /change/* ]]; then log "  삭제 요청 OK (${out##*/})"
+        else log "  ⚠ 삭제 실패 → 콘솔에서 ${TEST_OK} TXT(\"certbot-role-verify\") 확인·삭제: ${out}"; fi
+    fi
+    exit "$rc"
+}
+on_signal() { log "신호 수신 (Ctrl+C 등)"; exit 130; }
+
 wait_insync() {
     local i s
     for i in $(seq 1 20); do
@@ -164,18 +189,30 @@ phase_verify() {
     [[ "$zones" == *"$ZONE_ID"* ]] || die "ListHostedZones에서 ${ZONE_ID} 안 보임: ${zones}"
     log "② ListHostedZones OK (${ZONE_ID})"
 
+    local n name
+    for name in "$TEST_OK" "$TEST_DENY"; do
+        n="$(txt_exists "$name")" || die "기존 레코드 조회 실패 (${name})"
+        [[ "$n" == "0" ]] || die "${name}에 기존 TXT가 있음 (${n}) → 덮어쓰지 않도록 변경 없이 중단, 기존 값 확인 필요"
+    done
+    log "기존 TXT 없음 확인: ${TEST_OK}, ${TEST_DENY} (SOURCE_PROFILE 조회)"
+
     if [[ $APPLY -ne 1 ]]; then
         log "DRY-RUN: ③ 허용 TXT UPSERT·DELETE(${TEST_OK}), ④ 비허용 TXT UPSERT 거부(${TEST_DENY})는 --apply에서 실행"
         return 0
     fi
     local out
+    trap on_signal INT TERM
     out="$(change_txt UPSERT "$TEST_OK")" || true
     [[ "$out" == /change/* ]] || die "③ 허용 레코드 UPSERT 실패: ${out}"
+    TEST_TXT_PENDING=1
+    trap cleanup_test_txt EXIT
     wait_insync "$out"
     out="$(change_txt DELETE "$TEST_OK")" || true
-    [[ "$out" == /change/* ]] || die "③ 허용 레코드 DELETE 실패 (레코드 남음 → 콘솔에서 ${TEST_OK} TXT 삭제): ${out}"
+    [[ "$out" == /change/* ]] || die "③ 허용 레코드 DELETE 실패: ${out}"
     wait_insync "$out"
-    log "③ 허용 레코드 ${TEST_OK} TXT UPSERT·DELETE OK (GetChange 포함)"
+    TEST_TXT_PENDING=0
+    trap - EXIT INT TERM
+    log "③ 허용 레코드 ${TEST_OK} TXT UPSERT·DELETE OK (GetChange 포함, trap 해제)"
 
     out="$(change_txt UPSERT "$TEST_DENY")" || true
     if [[ "$out" == /change/* ]]; then
