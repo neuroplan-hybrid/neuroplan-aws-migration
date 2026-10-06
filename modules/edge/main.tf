@@ -164,7 +164,7 @@ resource "aws_lb_listener" "dr" {
   })
 }
 
-# ---------- Route 53 Health Check (HTTPS + FQDN + SNI, /health/ready) ----------
+# ---------- Route 53 Health Check (HTTPS + FQDN + SNI, /actuator/health/routing, #34) ----------
 # 헬스체크 대상 이름은 app 레코드와 분리 (primary-health / dr-health, 시나리오 4.8)
 # Route 53은 인증서를 검증하지 않음 → 인증서 발급 전에도 동작. 단 Host 라우팅 대상(ROSA Route, NGF HTTPRoute)은 필요
 

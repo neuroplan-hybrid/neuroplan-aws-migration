@@ -202,9 +202,9 @@ variable "onprem_weight" {
 }
 
 variable "health_check_path" {
-  description = "Route 53 헬스체크 경로 (App + DB 연결 확인, 실패 시 503)"
+  description = "Route 53 헬스체크 경로. Spring Boot routing health group(livenessState, deploymentSafety, DB 제외) — DB 장애만으로 DR 전환하지 않음 (#34)"
   type        = string
-  default     = "/health/ready"
+  default     = "/actuator/health/routing"
 }
 
 variable "health_check_request_interval" {
