@@ -34,7 +34,7 @@ rds_operation_socket: "/var/lib/mysql/mysql.sock"
 # 안전장치 기본값
 rds_operation_execute_mutations: false
 rds_operation_allow_reset_replica: false
-rds_operation_application_writes_fenced: false
+# Cutover 실행 의도를 명시하는 단일 승인 플래그다.
 rds_operation_cutover_approved: false
 rds_operation_dr_writes_fenced: false
 rds_operation_dr_promotion_approved: false
