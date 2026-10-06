@@ -236,14 +236,19 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 |---|---|
 | 희재안 (초안) | P0. 야간·연휴 3 → 2대, 시연일은 3대 → **리뷰 반영해 철회** |
 | 예린안 | Terraform 생성·삭제, 워커 최소화, RDS·NAT·LB 정리, Budgets·Cost Explorer. 리뷰: **기본 3AZ Worker 3대 유지**, Scheduled Scaling이 필요하면 **별도 Machine Pool/Autoscaling 구조로 검토**, **Spot Machine Pool 제외** |
-| 정현 의견 | 워커 축소는 P0가 아니라 **P1 또는 비용 절감 후보**. 10/6~시연 기간은 3대 유지, 부하·PDB·분산 배치 검증 후 여유가 있을 때만 별도 Plan·승인으로 결정 |
-| **결정** | **기본 3AZ 워커 3대 유지** (10/6~시연 기간). 스케줄 축소는 **P1 후보** — 필요하면 별도 Machine Pool/Autoscaling 구조로 검토하고 별도 Plan·승인. **Spot 제외** |
+| 정현 의견 | 워커 축소는 P0가 아니라 **P1 또는 비용 절감 후보**. 실제 ROSA 가동 기간인 10/12~10/16은 3대 유지, 부하·PDB·분산 배치 검증 후 여유가 있을 때만 별도 Plan·승인으로 결정 |
+| **결정** | **기본 3AZ 워커 3대 유지** (10/12~10/16). Worker 타입은 **m5.xlarge × 3**으로 확정(#42). 스케줄 축소는 **P1 후보** — 필요하면 별도 Machine Pool/Autoscaling 구조로 검토하고 별도 Plan·승인. **Spot 제외** |
 | 담당 | 예린 (지정 실행자 규칙과 함께) |
 
 **비용 최적화 P0 (워커 축소 대신)**
-- 비용표에 DB·전송 비용 반영 (아래)
-- **10/7 Cost Explorer 하루치 실측** → 남은 기간 추정 (기존 계획)
-- 종료 시 Terraform destroy + 잔존 리소스 확인 (기존 계획)
+- Worker 타입·대수 확정: **m5.xlarge × 3** (4 vCPU / 16 GiB, 총 12 vCPU, #42)
+- ROSA 핵심 고정비 기준: EC2 Worker 약 **$16.992/day** + ROSA Worker 서비스료 **$12.312/day** + HCP cluster fee **$6.000/day** = **약 $35.304/day**
+- Worker EBS, NAT Gateway, Site-to-Site VPN, RDS, DR/Ingress NLB, Route 53, 데이터 처리·전송까지 포함한 프로젝트 운영비는 **$45~50/day 보수적 추정치 유지**
+- 실제 ROSA 가동: **10/12~10/16 5일** → ROSA 핵심비용 약 **$176.52**, 전체 운영비 약 **$225~250**
+- ROSA 이전 누적 약 **$13~15** 포함 프로젝트 누적 예상: **약 $238~265**
+- Cost Explorer: **10/13 첫날 비용 실측**, **10/15 저녁 진행 여부 판단**, **10/16 destroy 전 캡처**, destroy 다음 날 이후 최종 비용 재확인
+- 종료 시 **10/16 Terraform destroy** + 잔존 리소스 확인. VPN·DR NLB를 포함한 유료 리소스도 함께 정리
+- 비용 중단 기준: 10/12 Apply 전 누적 **$230 이하**, 10/15 저녁 누적 **$430 이하**, 누적/예상 총액 **$480 이상 Hard Stop**
 - 발표: 이미 반영한 설계 결정(NAT 1개, S3 Gateway Endpoint, Resolver 제외, RDS 평소 Single-AZ, GA 제외)을 **비용 근거와 실측값**으로 정리
 
 **DB·전송 비용 (F10)** — 비용표에 추가
@@ -269,7 +274,7 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | C | k6 도입, probe.sh는 보조 | P0 | 희재 (Endpoint 정현) | 10/6 전 초안 | ✅ 확정 |
 | D | 대상 3종·기준, 배포 무중단, PDB·PriorityClass | P0 | 예린·정현 | 10/6 전 | ✅ 확정 |
 | E | Vault 동적 자격증명을 Cutover 후 ROSA Backend → RDS 운영 경로에 실제 적용 (검증용 TTL 15분 role 별도, DR은 정적 계정) | P1 | 설치·연동 예린 / DB role·복제 검증 정현 | ROSA 기간 | ✅ 확정 |
-| F | DB·전송 비용 반영, 10/7 실측, 종료 destroy | P0 | 비용표 예린·희재 | 10/7 | ✅ 확정 |
+| F | m5.xlarge × 3 비용 기준, DB·전송 비용 반영, Cost Explorer 실측, 10/16 destroy | P0 | 비용표 예린·희재 | 10/12~10/16 | ✅ 확정 |
 | F-2 | 워커 스케줄 축소 (별도 Machine Pool/Autoscaling) | P1 후보 | 예린 | 검증 후 | 3대 유지, 별도 Plan·승인 |
 | — | cert-manager 자동 갱신 | P2 | 예린 | — | |
 
@@ -296,7 +301,7 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | 인증서 | Router·NGF에 같은 인증서 | 동일 + **Route 단위 TLS** 명시, 별도 Ingress 없음 |
 | 시크릿 | Secrets Manager | Secrets Manager(Master) + **Vault 동적 자격증명(P1, Cutover 후 ROSA Backend → RDS 실제 적용)** + 온프렘 DR 정적 계정(Ansible Vault) |
 | 앱 HA | HPA/PDB | + **PriorityClass, startupProbe, Topology Spread** |
-| 비용 | ROSA 12일 상시 3대 | **3대 유지** + DB·전송 비용 반영, 10/7 실측. 스케줄 축소는 P1 후보(별도 Machine Pool/Autoscaling) |
+| 비용 | ROSA 12일 상시 3대 | **10/12~10/16 5일, m5.xlarge × 3 유지**. ROSA 핵심 약 **$35.304/day**, 전체 보수적 **$45~50/day**, 프로젝트 누적 예상 **$238~265**. Cost Explorer 실측 + 10/16 destroy, 스케줄 축소는 P1 후보(별도 Machine Pool/Autoscaling) |
 | ROSA 제약 해석 | "껐다 켜면 문제" | **클러스터 재생성은 금지**. 워커 수 조정은 별도 구조·Plan·승인이 있을 때만 |
 
 ## 7. 참고
