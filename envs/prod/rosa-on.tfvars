@@ -7,7 +7,14 @@ enable_rds           = true
 rds_mode             = "operation"
 enable_nat           = true
 enable_dr_nlb        = true
-route53_routing_mode = "off"
+route53_routing_mode = "weighted"
+
+# Route 53 Weighted (전환 검증, B안): 시작 ROSA 0 / 온프렘 100 → 이후 가중치만 바꾸는 tfvars PR로 10/90 → 50/50
+# primary_lb_dns_name: 10/13 ROSA Ingress LB 확인 후 입력 (null이면 온프렘 DR NLB 레코드·헬스체크만 생성)
+# 켜기 전 조건 (#28·#34): dr-health/primary-health의 /actuator/health/routing = 200
+primary_lb_dns_name = null # TODO(10/13): ROSA Ingress LB DNS
+rosa_weight         = 0
+onprem_weight       = 100
 
 # ROSA HCP Worker
 # 공식 기본값과 비용 산정 기준을 명시적으로 고정한다.

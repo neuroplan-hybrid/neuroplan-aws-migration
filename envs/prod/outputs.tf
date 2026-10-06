@@ -59,6 +59,24 @@ output "dr_nlb_security_group_id" {
   value       = module.edge.dr_nlb_security_group_id
 }
 
+output "route53_app_fqdn" {
+  description = "GSLB 대상 이름 (routing off면 null)"
+  value       = module.edge.app_fqdn
+}
+
+output "route53_app_record_sites" {
+  description = "app Weighted 레코드에 들어간 사이트 (rosa/onprem)"
+  value       = module.edge.app_record_sites
+}
+
+output "route53_health_check_ids" {
+  description = "Route 53 헬스체크 ID (aws route53 get-health-check-status)"
+  value = {
+    primary = module.edge.primary_health_check_id
+    dr      = module.edge.dr_health_check_id
+  }
+}
+
 # ---------- Data / RDS ----------
 output "rds_endpoint" {
   description = "RDS MariaDB endpoint"

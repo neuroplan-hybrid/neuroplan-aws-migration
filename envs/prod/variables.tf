@@ -41,8 +41,8 @@ variable "enable_dr_nlb" {
 }
 
 # Route 53 app 레코드 라우팅 (Route 53 = GSLB, PR #22 결정 B)
-# 현재: 4단계 모두 off (PR #28 리뷰 조건 — health 호스트·인증서·라우팅 정책 준비 후 별도 tfvars PR로 켬)
-# 예정 (B안): 이관·운영 모두 weighted. 이관은 가중치 조정(ROSA 0 → 10 → 50), 운영은 ROSA 1 / 온프렘 0 (Weighted 기반 active-passive)
+# poc·poc-cleanup = off, rosa-on·operation = weighted (B안). 이관은 가중치 조정(ROSA 0 → 10 → 50), 운영은 ROSA 1 / 온프렘 0 (Weighted 기반 active-passive)
+# 켜기 전 조건 (PR #28·#34): primary-health·dr-health의 /actuator/health/routing 200, 인증서(#45·#46)
 # off = 헬스체크·레코드 없음 / weighted = ROSA·온프렘(DR NLB) 가중치
 # failover는 모듈 호환용으로 validation에만 남김 (사용 계획 없음, 같은 이름의 weighted 레코드와 공존 불가)
 variable "route53_routing_mode" {
@@ -53,6 +53,41 @@ variable "route53_routing_mode" {
     condition     = contains(["off", "weighted", "failover"], var.route53_routing_mode)
     error_message = "route53_routing_mode는 off, weighted, failover 중 하나여야 합니다."
   }
+}
+
+# Route 53 라우팅 입력 (route53_routing_mode != off일 때 사용, #34·#43)
+# 도메인·Hosted Zone은 bootstrap/dns(#36)로 고정된 값. Zone ID는 비밀값이 아님
+variable "domain_name" {
+  type    = string
+  default = "neuroplan.cloud"
+}
+
+variable "hosted_zone_id" {
+  type    = string
+  default = "Z021384539IIHK7FGMEMN"
+}
+
+# ROSA Ingress LB (ROSA 생성 후 확인해 tfvars에 입력). null이면 ROSA 쪽 헬스체크·레코드 없이 온프렘(DR NLB)만
+variable "primary_lb_dns_name" {
+  type    = string
+  default = null
+}
+
+# ROSA Ingress LB가 NLB가 아니면 지정 (null이면 리전 NLB Alias Zone ID)
+variable "primary_lb_zone_id" {
+  type    = string
+  default = null
+}
+
+# Weighted 가중치 (B안): 전환 검증 0/100 → 10/90 → 50/50, 운영 1/0
+variable "rosa_weight" {
+  type    = number
+  default = 0
+}
+
+variable "onprem_weight" {
+  type    = number
+  default = 100
 }
 
 variable "enable_vault_kms" {
