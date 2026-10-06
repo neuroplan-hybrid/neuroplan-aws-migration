@@ -7,11 +7,11 @@ enable_rds           = true
 rds_mode             = "operation"
 enable_nat           = true
 enable_dr_nlb        = true
-route53_routing_mode = "weighted"
+route53_routing_mode = "off" # TODO(10/13): "weighted" — LB DNS 입력과 같은 커밋에서만 전환 (#33, PR #49 리뷰 B안)
 
 # Route 53 Weighted (전환 검증, B안): 시작 ROSA 0 / 온프렘 100 → 이후 가중치만 바꾸는 tfvars PR로 10/90 → 50/50
-# primary_lb_dns_name: 10/13 ROSA Ingress LB 확인 후 입력 (null이면 온프렘 DR NLB 레코드·헬스체크만 생성)
-# 켜기 전 조건 (#28·#34): dr-health/primary-health의 /actuator/health/routing = 200
+# 10/13 전환 조건 (#28·#33·#34): ① ROSA Ingress LB DNS 확인 ② LB가 NLB가 아니면 primary_lb_zone_id 입력
+#   ③ dr-health·primary-health /actuator/health/routing = 200 ④ plan에서 Route 53 레코드·헬스체크 생성 내용 확인
 primary_lb_dns_name = null # TODO(10/13): ROSA Ingress LB DNS
 rosa_weight         = 0
 onprem_weight       = 100

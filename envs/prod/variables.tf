@@ -67,10 +67,16 @@ variable "hosted_zone_id" {
   default = "Z021384539IIHK7FGMEMN"
 }
 
-# ROSA Ingress LB (ROSA 생성 후 확인해 tfvars에 입력). null이면 ROSA 쪽 헬스체크·레코드 없이 온프렘(DR NLB)만
+# ROSA Ingress LB (10/13 ROSA 생성 후 확인해 tfvars에 입력)
 variable "primary_lb_dns_name" {
   type    = string
   default = null
+
+  # B안 (#33, PR #49 리뷰): 라우팅은 ROSA LB 입력과 함께 한 번에 켬 → 온프렘만 먼저 켜는 부분 전환 방지
+  validation {
+    condition     = var.route53_routing_mode == "off" || var.primary_lb_dns_name != null
+    error_message = "route53_routing_mode를 켜려면 primary_lb_dns_name(ROSA Ingress LB DNS)이 필요합니다. 온프렘만 먼저 켜지 않습니다 (B안)."
+  }
 }
 
 # ROSA Ingress LB가 NLB가 아니면 지정 (null이면 리전 NLB Alias Zone ID)
@@ -83,11 +89,23 @@ variable "primary_lb_zone_id" {
 variable "rosa_weight" {
   type    = number
   default = 0
+
+  # ROSA 가중치가 0보다 크면 ROSA LB가 있어야 함 (없으면 ROSA 레코드가 만들어지지 않아 의도한 비율이 성립하지 않음, PR #49 리뷰)
+  validation {
+    condition     = var.route53_routing_mode == "off" || var.rosa_weight == 0 || var.primary_lb_dns_name != null
+    error_message = "route53_routing_mode가 off가 아니고 rosa_weight > 0이면 primary_lb_dns_name(ROSA Ingress LB DNS)이 필요합니다."
+  }
 }
 
 variable "onprem_weight" {
   type    = number
   default = 100
+
+  # 라우팅을 켰을 때 응답할 레코드가 없거나 모두 가중치 0인 상태 방지
+  validation {
+    condition     = var.route53_routing_mode == "off" || var.rosa_weight + var.onprem_weight > 0
+    error_message = "route53_routing_mode가 off가 아니면 rosa_weight + onprem_weight > 0 이어야 합니다."
+  }
 }
 
 variable "enable_vault_kms" {
