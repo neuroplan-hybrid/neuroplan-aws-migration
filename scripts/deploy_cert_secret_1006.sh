@@ -8,8 +8,8 @@
 # 단계
 #   onprem        neuroplan-onprem → 온프렘 K8s Secret application/neuroplan-cloud-onprem-tls (CP1_HOST 필요)
 #   rosa          neuroplan-rosa   → OpenShift Secret neuroplan/neuroplan-cloud-rosa-tls (ROSA_HOST 필요, 10/12 이후)
-#   status        로컬 인증서와 원격 Secret의 지문(SHA256) 비교 (읽기만)
-#   purge-onprem  원격 Secret 지문이 로컬과 같을 때만 Infra VM의 neuroplan-onprem 사본 삭제
+#   status        로컬 인증서와 원격 Secret 검증 결과 (읽기만)
+#   purge-onprem  원격 Secret 검증(아래 3조건)을 통과할 때만 Infra VM의 neuroplan-onprem 사본 삭제
 #   purge-rosa    위와 같음 (neuroplan-rosa)
 # 환경 변수
 #   CP1_HOST   온프렘 kubectl 호스트 SSH 대상 (예: root@<cp1 Mgmt 주소>)
@@ -19,7 +19,10 @@
 #   - 운영 인증서(발급자에 STAGING 없음), SAN 기대값과 정확히 일치, 만료 14일 이상 남음
 #   - 개인 키와 인증서 공개 키 일치, 키 파일 권한 600
 #   - SSH 접속(ConnectTimeout 10), 원격 CLI·namespace 존재
-#   - 원격 Secret이 이미 있으면: 같은 인증서면 건너뜀, 다르면 덮어쓰지 않고 중단
+#   - 원격 Secret이 이미 있으면: 아래 3조건을 모두 만족할 때만 건너뜀, 아니면 덮어쓰지 않고 중단
+# 원격 Secret 검증 (건너뜀·생성 후 확인·purge 허용 전, PR #46 리뷰)
+#   ① tls.crt·tls.key 모두 존재 ② 원격 인증서 공개 키 = 원격 개인 키 공개 키 (SHA256) ③ 원격 인증서 지문 = 로컬 인증서 지문
+#   계산은 원격 호스트에서 하고 지문만 받음 (키 원문은 출력·전송하지 않음)
 # 하지 않는 일
 #   - kubectl apply (last-applied annotation에 키가 한 벌 더 저장됨) → create만 사용
 #   - Gateway listener·HTTPRoute 연결 (setup_dr_health_1006.sh gateway·route), ROSA Route 연결 (예린)
@@ -62,8 +65,30 @@ load() {  # $1 onprem|rosa → 전역 변수 설정
 # 연결 1개를 재사용 (비밀번호 접속이어도 처음 1회만 입력)
 ssh_t() { ssh -o ConnectTimeout=10 -o ControlMaster=auto -o "ControlPath=/root/.ssh/cm-%r@%h:%p" -o ControlPersist=120 "$HOST" "$@"; }
 fp_local() { openssl x509 -in "$CRT" -noout -fingerprint -sha256 | cut -d= -f2; }
-fp_remote() {  # 원격 Secret 인증서 지문 (없으면 빈 문자열)
-    ssh_t "$CLI -n $NS get secret $SECRET -o jsonpath='{.data.tls\\.crt}' 2>/dev/null | base64 -d 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2" || true
+pub_local() { openssl x509 -in "$CRT" -noout -pubkey | sha256sum | cut -c1-64; }
+# 원격 Secret 상태 → 전역 R_STATE(NONE/OK/BAD), R_FP, R_MSG. 원격에서 지문만 계산해 "인증서지문|인증서공개키|개인키공개키"로 받음
+remote_state() {
+    local out crtpub keypub
+    out="$(ssh_t "bash -s" <<EOF || true
+c=\$($CLI -n $NS get secret $SECRET -o jsonpath='{.data.tls\.crt}' 2>/dev/null) || { echo NONE; exit 0; }
+k=\$($CLI -n $NS get secret $SECRET -o jsonpath='{.data.tls\.key}' 2>/dev/null)
+fp=\$(printf '%s' "\$c" | base64 -d 2>/dev/null | openssl x509 -noout -fingerprint -sha256 2>/dev/null | cut -d= -f2)
+cp=\$(printf '%s' "\$c" | base64 -d 2>/dev/null | openssl x509 -noout -pubkey 2>/dev/null | sha256sum | cut -c1-64)
+if [ -n "\$k" ]; then kp=\$(printf '%s' "\$k" | base64 -d 2>/dev/null | openssl pkey -pubout 2>/dev/null | sha256sum | cut -c1-64); else kp=NOKEY; fi
+echo "\$fp|\$cp|\$kp"
+EOF
+)"
+    R_FP=""; R_MSG=""
+    if [[ "$out" == "NONE" ]]; then R_STATE="NONE"; return 0; fi
+    IFS='|' read -r R_FP crtpub keypub <<<"$out"
+    local empty_sha
+    empty_sha="$(printf '' | sha256sum | cut -c1-64)"
+    if [[ -z "$R_FP" || "$crtpub" == "$empty_sha" ]]; then R_STATE="BAD"; R_MSG="tls.crt 없음 또는 읽을 수 없음"
+    elif [[ "$keypub" == "NOKEY" ]]; then R_STATE="BAD"; R_MSG="tls.key 없음"
+    elif [[ "$keypub" == "$empty_sha" || "$keypub" != "$crtpub" ]]; then R_STATE="BAD"; R_MSG="원격 tls.key가 tls.crt와 짝이 아님"
+    elif [[ "$R_FP" != "$(fp_local)" || "$crtpub" != "$(pub_local)" ]]; then R_STATE="BAD"; R_MSG="원격 인증서가 로컬과 다름 (원격 ${R_FP})"
+    else R_STATE="OK"; R_MSG="tls.crt·tls.key 존재, 키 짝 일치, 로컬 인증서와 지문 일치"
+    fi
 }
 
 check_local() {
@@ -115,13 +140,11 @@ deploy() {
     log "단계=${PHASE} 모드=$(mode) 대상=${CLI} ${NS}/${SECRET}"
     check_local
     check_remote
-    local rfp lfp
-    lfp="$(fp_local)"; rfp="$(fp_remote)"
-    if [[ -n "$rfp" ]]; then
-        [[ "$rfp" == "$lfp" ]] || die "Secret ${NS}/${SECRET}가 이미 있고 다른 인증서 (원격 ${rfp}) → 덮어쓰지 않음, 수동 확인"
-        log "Secret ${NS}/${SECRET} 이미 같은 인증서로 있음 → 건너뜀"
-        return 0
-    fi
+    remote_state
+    case "$R_STATE" in
+        OK)  log "Secret ${NS}/${SECRET} 이미 있음, 검증 통과 (${R_MSG}) → 건너뜀"; return 0 ;;
+        BAD) die "Secret ${NS}/${SECRET}가 이미 있으나 검증 실패: ${R_MSG} → 덮어쓰지 않음, 수동 확인" ;;
+    esac
     log "Secret ${NS}/${SECRET} 생성 예정 (kubectl create, stdin 전달 — 원격 디스크·명령줄에 키 없음)"
     if [[ $APPLY -eq 1 ]]; then
         secret_yaml | ssh_t "$CLI create -f -"
@@ -129,9 +152,9 @@ deploy() {
         secret_yaml | ssh_t "$CLI create --dry-run=server -f - -o name"
         return 0
     fi
-    rfp="$(fp_remote)"
-    [[ "$rfp" == "$lfp" ]] || die "생성 후 지문 불일치 (원격 ${rfp:-없음})"
-    log "확인: 원격 Secret 지문 = 로컬 (${lfp})"
+    remote_state
+    [[ "$R_STATE" == "OK" ]] || die "생성 후 검증 실패: ${R_STATE} ${R_MSG}"
+    log "확인: ${R_MSG} ($(fp_local))"
     log "다음: onprem이면 setup_dr_health_1006.sh gateway → route → verify, 확인 후 purge-onprem --apply"
 }
 
@@ -141,10 +164,9 @@ purge() {
     local d="$BASE"
     [[ -d "${d}/live/${CERT}" ]] || { log "${CERT} 사본 없음 → 할 일 없음"; return 0; }
     check_remote
-    local rfp lfp
-    lfp="$(fp_local)"; rfp="$(fp_remote)"
-    [[ -n "$rfp" && "$rfp" == "$lfp" ]] || die "원격 Secret ${NS}/${SECRET} 지문이 로컬과 다르거나 없음 → 사본을 지우지 않음"
-    log "원격 Secret 확인 (지문 일치) → 삭제 예정: ${d}/{live,archive}/${CERT}, ${d}/renewal/${CERT}.conf"
+    remote_state
+    [[ "$R_STATE" == "OK" ]] || die "원격 Secret ${NS}/${SECRET} 검증 실패(${R_STATE}: ${R_MSG:-Secret 없음}) → 사본을 지우지 않음"
+    log "원격 Secret 검증 통과 (${R_MSG}) → 삭제 예정: ${d}/{live,archive}/${CERT}, ${d}/renewal/${CERT}.conf"
     [[ $APPLY -eq 1 ]] || return 0
     rm -rf "${d}/live/${CERT}" "${d}/archive/${CERT}" "${d}/renewal/${CERT}.conf"
     [[ ! -e "${d}/archive/${CERT}" ]] && log "삭제 완료 (개인 키 사본 없음)"
@@ -156,7 +178,7 @@ status() {
         load "$t"
         if [[ -f "$CRT" ]]; then log "${CERT} 로컬: $(fp_local)"; else log "${CERT} 로컬: 없음"; fi
         if [[ -n "$HOST" ]] && ssh_t true 2>/dev/null; then
-            log "  원격 ${HOST} ${NS}/${SECRET}: $(fp_remote || true)"
+            if [[ -f "$CRT" ]]; then remote_state; log "  원격 ${HOST} ${NS}/${SECRET}: ${R_STATE} ${R_MSG}"; else log "  원격 비교 생략 (로컬 인증서 없음)"; fi
         else
             log "  원격: ${HOSTVAR} 미설정 또는 접속 불가 → 건너뜀"
         fi
