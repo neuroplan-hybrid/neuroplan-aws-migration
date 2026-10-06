@@ -3,8 +3,15 @@ terraform {
 
   required_providers {
     aws = {
-      source = "hashicorp/aws"
-      # version = "" # 팀에서 확정 후 고정
+      source  = "hashicorp/aws"
+      version = ">= 6.44.0"
     }
+  }
+
+  backend "s3" {
+    key          = "bootstrap/dns/terraform.tfstate"
+    region       = "ap-northeast-2"
+    use_lockfile = true
+    encrypt      = true
   }
 }
