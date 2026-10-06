@@ -1,4 +1,12 @@
 ---
+- name: Build exact expected RDS replica source patterns
+  ansible.builtin.set_fact:
+    rds_operation_master_host_pattern: >-
+      {{ '(?m)^Master_Host:\\s+' ~ (rds_operation_endpoint | regex_escape) ~ '\\s*$' }}
+    rds_operation_master_port_pattern: >-
+      {{ '(?m)^Master_Port:\\s+' ~ (rds_operation_port | string | regex_escape) ~ '\\s*$' }}
+  no_log: true
+
 - name: Read On-Prem replica status
   ansible.builtin.shell: |
     mariadb --protocol=socket --batch --skip-column-names --execute "SHOW SLAVE STATUS\\G"
@@ -10,7 +18,8 @@
 - name: Require healthy RDS to On-Prem replication
   ansible.builtin.assert:
     that:
-      - rds_operation_onprem_replica_status.stdout is search('Master_Host:[[:space:]]+' ~ rds_operation_endpoint)
+      - rds_operation_onprem_replica_status.stdout is search(rds_operation_master_host_pattern)
+      - rds_operation_onprem_replica_status.stdout is search(rds_operation_master_port_pattern)
       - rds_operation_onprem_replica_status.stdout is search('Slave_IO_Running:[[:space:]]+Yes')
       - rds_operation_onprem_replica_status.stdout is search('Slave_SQL_Running:[[:space:]]+Yes')
       - rds_operation_onprem_replica_status.stdout is search('Using_Gtid:[[:space:]]+Slave_Pos')

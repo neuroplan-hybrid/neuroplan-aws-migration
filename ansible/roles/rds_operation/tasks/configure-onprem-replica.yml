@@ -8,6 +8,14 @@
     fail_msg: "configure-onprem-replica에는 승인 플래그와 Vault 제공 복제 비밀번호가 필요합니다."
   no_log: true
 
+- name: Build exact expected RDS replica source patterns
+  ansible.builtin.set_fact:
+    rds_operation_master_host_pattern: >-
+      {{ '(?m)^Master_Host:\\s+' ~ (rds_operation_endpoint | regex_escape) ~ '\\s*$' }}
+    rds_operation_master_port_pattern: >-
+      {{ '(?m)^Master_Port:\\s+' ~ (rds_operation_port | string | regex_escape) ~ '\\s*$' }}
+  no_log: true
+
 - name: Inspect any existing replica source configuration
   ansible.builtin.shell: |
     mariadb --protocol=socket --batch --skip-column-names --execute "SHOW SLAVE STATUS\\G"
@@ -21,7 +29,10 @@
     that:
       - >-
         (rds_operation_existing_slave_status.stdout | trim | length == 0)
-        or (rds_operation_existing_slave_status.stdout is search('Master_Host:[[:space:]]+' ~ rds_operation_endpoint))
+        or (
+          (rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern))
+          and (rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern))
+        )
         or (rds_operation_allow_reset_replica | bool)
     fail_msg: >-
       이 DB는 다른 Master를 복제 중입니다. 현재 설정을 지우지 않았습니다.
@@ -37,7 +48,10 @@
     RDS_OPERATION_OUTBOUND_REPL_PASSWORD: "{{ rds_operation_outbound_repl_password }}"
   when: >-
     (rds_operation_existing_slave_status.stdout | trim | length == 0)
-    or not (rds_operation_existing_slave_status.stdout is search('Master_Host:[[:space:]]+' ~ rds_operation_endpoint))
+    or not (
+      (rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern))
+      and (rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern))
+    )
   no_log: true
 
 - name: Ensure an already-configured RDS replica is read only and started
@@ -47,5 +61,7 @@
       - --protocol=socket
       - --execute
       - "SET GLOBAL read_only = ON; START SLAVE;"
-  when: rds_operation_existing_slave_status.stdout is search('Master_Host:[[:space:]]+' ~ rds_operation_endpoint)
+  when: >-
+    (rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern))
+    and (rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern))
   no_log: true
