@@ -17,7 +17,7 @@ DR NLB와 Route 53(GSLB) 레코드·헬스체크를 만드는 희재 담당 모�
 | 조건 | 리소스 |
 |---|---|
 | `enable_dr_nlb` | SG(인바운드 443 ← `dr_nlb_ingress_cidrs`, 아웃바운드 → VIP/32:443), NLB(internet-facing), Target Group(TCP, IP, TCP 헬스체크), VIP 타깃, Listener 443 |
-| `enable_route53_routing` + `enable_dr_nlb` | 헬스체크 `dr-health`(HTTPS, SNI, `/health/ready`), `dr-health.<도메인>` Alias → DR NLB, app 레코드 `onprem` |
+| `enable_route53_routing` + `enable_dr_nlb` | 헬스체크 `dr-health`(HTTPS, SNI, `/actuator/health/routing`), `dr-health.<도메인>` Alias → DR NLB, app 레코드 `onprem` |
 | `enable_route53_routing` + `primary_lb_dns_name` | 헬스체크 `primary-health`, `primary-health.<도메인>` Alias → ROSA LB, app 레코드 `rosa` |
 | `app_routing_policy` | `weighted`: `app_weighted[rosa/onprem]` (사용) / `failover`: `app_failover[rosa=PRIMARY, onprem=SECONDARY]` (모듈 호환용, 사용 계획 없음) / `none`: app 레코드 없음 |
 
@@ -48,9 +48,10 @@ DR NLB와 Route 53(GSLB) 레코드·헬스체크를 만드는 희재 담당 모�
 |---|---|---|
 | Public RT `192.168.24.0/24 → VGW`, VPN static route | 희재 (hybrid, 적용됨) | NLB 타깃 unhealthy |
 | Infra `aws-to-dmz` policy, LB 반환 라우트 | 희재 (온프렘, 0930 적용) | 타깃 unhealthy |
-| ROSA Route host `primary-health.<도메인>` → `/health/ready` | 예린 | ROSA 헬스체크 실패 (Router 503) |
-| 온프렘 NGF HTTPRoute hostname `app.<도메인>`, `dr-health.<도메인>` | 온프렘 앱 배포 | DR 헬스체크 실패 |
-| `/health/ready` (App + DB, 실패 시 503) | 정현 | 헬스체크 의미 없음 |
+| ROSA Route host `primary-health.<도메인>` → `/actuator/health/routing` (Health 전용 Service, gitops #4) | 예린 | ROSA 헬스체크 실패 (Router 503) |
+| 온프렘 NGF listener·HTTPRoute `dr-health.<도메인>` → `/actuator/health/routing` (Health 전용 Service, `scripts/setup_dr_health_1006.sh`) | 희재 | DR 헬스체크 실패 |
+| 온프렘 `app.<도메인>` listener·HTTPRoute hostname | 별도 (GitOps `overlays/onprem-dr`) | DR 전환 후 사용자 요청 404 |
+| Backend `routing` health group (`livenessState,deploymentSafety`, DB 제외) | 정현 | `/actuator/health/routing` 404 → 헬스체크 실패 |
 | Hosted Zone, 도메인 | 희재 (bootstrap/dns) | `enable_route53_routing = true` 시 plan 단계에서 중단 |
 | 공인 인증서 (Route 단위 TLS, NGF) | 희재 발급 → 예린·온프렘 적용 | 브라우저 경고 (Route 53 헬스체크는 인증서를 검증하지 않음) |
 
