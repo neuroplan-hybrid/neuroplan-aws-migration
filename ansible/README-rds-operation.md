@@ -13,9 +13,9 @@ DB 내용·복제 역할만 다룬다. VPC, VPN, Route Table, Security Group, Ma
 ## 안전 원칙
 
 - 기본 실행은 읽기 전용 preflight다.
-- DB를 바꾸는 태그는 모두 `-e rds_operation_execute_mutations=true`가 필요하다.
-- Cutover는 추가로 `rds_operation_application_writes_fenced=true`와
-  `rds_operation_cutover_approved=true`가 필요하다.
+- Import·복제 구성 등 DB를 바꾸는 일반 실행은 `-e rds_operation_execute_mutations=true`가 필요하다.
+- Cutover는 앱 쓰기 차단과 기술 검증을 마친 뒤
+  `-e rds_operation_cutover_approved=true` 하나로 실행한다.
 - DR 승격은 추가로 `rds_operation_dr_writes_fenced=true`와
   `rds_operation_dr_promotion_approved=true`가 필요하다.
 - 비밀번호, AWS Access Key, RDS Secret 내용은 Git에 저장하지 않는다. 복제 비밀번호는
@@ -66,10 +66,8 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=verify-rds-inbound
 
-# 3. Cutover: 앱 쓰기 차단·RDS catch-up을 사람이 확인한 뒤 실행
+# 3. Cutover: 앱 쓰기 차단·RDS catch-up을 확인한 뒤 단일 승인 플래그로 실행
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-cutover.yml \
-  -e rds_operation_execute_mutations=true \
-  -e rds_operation_application_writes_fenced=true \
   -e rds_operation_cutover_approved=true
 
 # 4. 운영 토폴로지: RDS → db-primary, db-replica

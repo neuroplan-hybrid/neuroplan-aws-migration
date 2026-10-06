@@ -1,13 +1,11 @@
 ---
-- name: Require explicit cutover approval and application write fencing
+- name: Require explicit cutover approval
   ansible.builtin.assert:
     that:
-      - rds_operation_execute_mutations | bool
-      - rds_operation_application_writes_fenced | bool
       - rds_operation_cutover_approved | bool
     fail_msg: >-
-      Cutover는 정상 애플리케이션 쓰기를 먼저 차단하고,
-      execute_mutations/application_writes_fenced/cutover_approved를 모두 true로 줘야 합니다.
+      Cutover 전 앱 쓰기 차단과 복제 상태 검증을 마친 뒤
+      rds_operation_cutover_approved=true로 실행하세요.
 
 - name: Make former On-Prem source read only
   ansible.builtin.command:
