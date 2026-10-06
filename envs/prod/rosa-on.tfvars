@@ -9,6 +9,11 @@ enable_nat           = true
 enable_dr_nlb        = true
 route53_routing_mode = "off"
 
+# ROSA HCP Worker
+# 공식 기본값과 비용 산정 기준을 명시적으로 고정한다.
+compute_machine_type = "m5.xlarge"
+rosa_replicas        = 3
+
 # 운영 RDS 기본 사양
 # PoC RDS와 별개로 생성한다. 비용 우선 기본값은 Single-AZ이며,
 # Multi-AZ 시연 전에는 operation.tfvars의 rds_multi_az만 true로 변경한다.
