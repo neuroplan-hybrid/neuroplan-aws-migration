@@ -112,7 +112,7 @@
 
 | | 내용 |
 |---|---|
-| 희재안 | Route 53 중심 유지. **Global Accelerator는 제외** — 같은 리전 안 Active-Passive에 안 맞음(가중치 0 엔드포인트는 fail-open일 때만 트래픽을 받음). 비용은 $0.025/h(12일 약 $7) + 전송 추가 요금으로 크지 않지만 효과가 작음 |
+| 희재안 | Route 53 중심 유지. **Global Accelerator는 제외** — 같은 리전 안 Active-Passive에 안 맞음(가중치 0 엔드포인트는 fail-open일 때만 트래픽을 받음). 비용은 $0.025/h(현재 5일 일정이면 약 $3) + 전송 추가 요금으로 크지 않지만 효과가 작음 |
 | 예린안 | On-Prem ↔ ROSA에는 Route 53이 자연스러움. GA는 AWS 멀티리전에 강함 |
 | 정현 의견 | 이견 없음 |
 | **결정** | **Route 53 = GSLB로 명시, Global Accelerator 제외**. 사이트 표시(`X-Site`) 방법은 정현·예린이 앱 구현과 함께 결정 |
