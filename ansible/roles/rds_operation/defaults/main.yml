@@ -3,6 +3,8 @@ rds_operation_node_role: ""
 # 기본값은 변경 없는 preflight다. 각 변경 단계는 실행 시 명시한다.
 rds_operation_run_mode: "preflight"
 rds_operation_aws_region: "ap-northeast-2"
+# 실행 시 AWS API로 Endpoint·Port·Master Secret ARN을 자동 조회한다.
+rds_operation_identifier: ""
 rds_operation_endpoint: ""
 rds_operation_port: 3306
 rds_operation_master_secret_arn: ""

@@ -2,9 +2,8 @@
 # 실제 파일명은 rds_operation.yml로 복사한다. Secret은 저장하지 않는다.
 
 rds_operation_aws_region: "ap-northeast-2"
-rds_operation_endpoint: ""               # Terraform output rds_endpoint
-rds_operation_port: 3306
-rds_operation_master_secret_arn: ""      # Terraform output master_user_secret_arn
+# Endpoint·Port·Master Secret ARN은 실행 시 AWS API로 자동 조회한다.
+rds_operation_identifier: "neuroplan-rds-operation"
 
 rds_operation_database: "infraready"
 rds_operation_database_collation: "utf8mb4_uca1400_ai_ci"

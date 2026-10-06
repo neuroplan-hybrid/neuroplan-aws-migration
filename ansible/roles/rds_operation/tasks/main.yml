@@ -6,6 +6,12 @@
     fail_msg: "rds_operation_node_role이 올바르지 않습니다."
   tags: [always]
 
+- name: Discover current RDS connection values on the controller
+  ansible.builtin.import_tasks: discover-rds-connection.yml
+  when:
+    - rds_operation_node_role == "controller"
+  tags: [always]
+
 - name: Run controller preflight
   ansible.builtin.import_tasks: controller-preflight.yml
   when:

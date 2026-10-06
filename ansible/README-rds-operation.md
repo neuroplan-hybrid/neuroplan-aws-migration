@@ -31,8 +31,9 @@ cp group_vars/rds_operation.yml.example group_vars/rds_operation.yml
 chmod 600 group_vars/rds_operation.yml
 ```
 
-`group_vars/rds_operation.yml`에 Terraform Output의 RDS Endpoint와 Master Secret ARN을 넣는다.
-DevOps VM에서 `aws secretsmanager get-secret-value`를 실행할 AWS 인증도 별도로 준비한다.
+`group_vars/rds_operation.yml`에는 RDS 식별자(`rds_operation_identifier`)만 넣는다.
+Playbook은 실행 시 AWS API로 현재 RDS Endpoint·Port·Master Secret ARN을 자동 조회한다.
+DevOps VM에는 `rds:DescribeDBInstances`, `secretsmanager:GetSecretValue` 권한을 가진 AWS 인증이 필요하다.
 
 ## 실행 단계
 
