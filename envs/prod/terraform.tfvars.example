@@ -2,7 +2,8 @@ aws_region        = "ap-northeast-2"
 cluster_name      = "neuroplan-rosa"
 openshift_version = "4.21.33"
 
-compute_machine_type = null
+# ROSA HCP Worker: 프로젝트 비용 산정 기준
+compute_machine_type = "m5.xlarge"
 rosa_replicas        = 3
 
 # ROSA 서브넷(aws_subnet_ids)과 machine_cidr는 module.network 출력으로 자동 연결 (integrate-network)

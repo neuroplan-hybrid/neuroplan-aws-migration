@@ -9,6 +9,11 @@ enable_nat           = true
 enable_dr_nlb        = true
 route53_routing_mode = "off"
 
+# ROSA HCP Worker
+# rosa-on과 동일한 타입/대수로 유지한다.
+compute_machine_type = "m5.xlarge"
+rosa_replicas        = 3
+
 # 운영 RDS 기본 사양
 # 비용 우선 기본값은 Single-AZ이다. T6 시연·RTO 측정 직전에
 # rds_multi_az를 true로 변경하고 Plan/승인/Apply 후 Failover를 수행한다.
