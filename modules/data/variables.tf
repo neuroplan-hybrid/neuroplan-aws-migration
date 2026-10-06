@@ -129,7 +129,7 @@ variable "parameter_group_parameters" {
       apply_method = "pending-reboot"
     }
     collation_server = {
-      value        = "utf8mb4_uca1400_ai_ci"
+      value        = "utf8mb4_unicode_ci"
       apply_method = "pending-reboot"
     }
     time_zone = {
