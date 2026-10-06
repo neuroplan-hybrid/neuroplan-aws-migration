@@ -6,6 +6,8 @@
   become: true
   gather_facts: false
   serial: 1
+  vars_files:
+    - ../group_vars/rds_operation.yml
   vars:
     rds_operation_node_role: onprem_replica
     rds_operation_run_mode: dr-promote

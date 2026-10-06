@@ -6,6 +6,8 @@
   hosts: onprem_primary
   become: true
   gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
   vars:
     rds_operation_node_role: cutover_source
     rds_operation_run_mode: cutover
@@ -15,6 +17,8 @@
 - name: Stop RDS inbound replication and make RDS the writable primary
   hosts: rds_controller
   gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
   vars:
     rds_operation_node_role: controller
     rds_operation_run_mode: cutover
