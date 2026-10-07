@@ -10,7 +10,13 @@ rds_operation_port: 3306
 rds_operation_master_secret_arn: ""
 rds_operation_database: "infraready"
 rds_operation_database_collation: "utf8mb4_uca1400_ai_ci"
+
+# 초기 동기화는 On-Prem primary의 최신 정상 논리백업을 자동 선택한다.
+# 선택된 동일 파일의 덤프 헤더 GTID를 RDS inbound replication에 사용한다.
+rds_operation_backup_directory: "/mnt/db-backup"
+rds_operation_seed_staging_directory: "/tmp/neuroplan-rds-operation"
 rds_operation_seed_sql_gz: ""
+rds_operation_inbound_gtid_position: ""
 
 rds_operation_outbound_repl_username: "rds_to_onprem"
 rds_operation_outbound_repl_password: ""
@@ -23,7 +29,6 @@ rds_operation_inbound_source_port: 3306
 rds_operation_inbound_repl_username: "onprem_to_rds"
 rds_operation_inbound_repl_password: ""
 rds_operation_inbound_repl_hosts: []
-rds_operation_inbound_gtid_position: ""
 
 rds_operation_socket: "/var/lib/mysql/mysql.sock"
 rds_operation_execute_mutations: false
@@ -32,4 +37,5 @@ rds_operation_allow_reset_replica: false
 rds_operation_cutover_approved: false
 rds_operation_dr_writes_fenced: false
 rds_operation_dr_promotion_approved: false
-rds_operation_dr_promoted_inventory_hostname: ""
+# T6 DR 승격 대상은 db-primary로 고정한다.
+rds_operation_dr_promoted_inventory_hostname: "db-primary"

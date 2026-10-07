@@ -1,0 +1,93 @@
+---
+- name: Require exactly one On-Prem primary for seed discovery
+  ansible.builtin.assert:
+    that:
+      - groups.get("onprem_primary", []) | length == 1
+    fail_msg: "최신 논리백업 자동 선택에는 inventory의 onprem_primary 한 대가 필요합니다."
+  changed_when: false
+
+- name: Find latest valid logical backup and matching GTID on On-Prem primary
+  ansible.builtin.shell: |
+    set -Eeuo pipefail
+    backup_dir={{ rds_operation_backup_directory | quote }}
+    database={{ rds_operation_database | quote }}
+
+    candidates="$( 
+      find "$backup_dir" -maxdepth 1 -type f \
+        -name "$database"'_*.sql.gz' \
+        -printf '%T@ %p\n' \
+        | sort -nr \
+        | cut -d' ' -f2-
+    )"
+
+    while IFS= read -r candidate; do
+      [[ -n "$candidate" && -s "$candidate" && -s "$candidate.sha256" ]] || continue
+      sha256sum -c "$candidate.sha256" >/dev/null 2>&1 || continue
+      gzip -t "$candidate" || continue
+
+      gtid="$( 
+        gzip -cd "$candidate" \
+          | sed -nE "s/^-- SET GLOBAL gtid_slave_pos='([0-9]+-[0-9]+-[0-9]+)';$/\1/p"
+      )"
+      [[ "$(printf '%s\n' "$gtid" | sed '/^$/d' | wc -l)" -eq 1 ]] || continue
+
+      printf '%s\t%s\n' "$candidate" "$gtid"
+      exit 0
+    done <<< "$candidates"
+
+    echo "No valid logical backup with checksum and GTID metadata was found." >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  delegate_to: "{{ groups['onprem_primary'] | first }}"
+  become: true
+  register: rds_operation_seed_discovery
+  changed_when: false
+
+- name: Require selected backup metadata to be unambiguous
+  ansible.builtin.assert:
+    that:
+      - rds_operation_seed_discovery.stdout is match('^.+\.sql\.gz\t[0-9]+-[0-9]+-[0-9]+$')
+    fail_msg: "선택된 논리백업의 경로 또는 GTID 메타데이터 형식이 올바르지 않습니다."
+  changed_when: false
+
+- name: Save selected backup path and GTID
+  ansible.builtin.set_fact:
+    rds_operation_seed_sql_gz_onprem: "{{ rds_operation_seed_discovery.stdout.split('\t', 1)[0] }}"
+    rds_operation_inbound_gtid_position: "{{ rds_operation_seed_discovery.stdout.split('\t', 1)[1] }}"
+  changed_when: false
+
+- name: Create controller staging directory for selected backup
+  ansible.builtin.file:
+    path: "{{ rds_operation_seed_staging_directory }}"
+    state: directory
+    mode: "0700"
+
+- name: Fetch selected logical backup from On-Prem primary
+  ansible.builtin.fetch:
+    src: "{{ rds_operation_seed_sql_gz_onprem }}"
+    dest: "{{ rds_operation_seed_staging_directory }}/"
+    flat: true
+    validate_checksum: true
+  delegate_to: "{{ groups['onprem_primary'] | first }}"
+  become: true
+
+- name: Use selected backup and matching GTID for this Ansible run
+  ansible.builtin.set_fact:
+    rds_operation_seed_sql_gz: >-
+      {{ rds_operation_seed_staging_directory }}/{{ rds_operation_seed_sql_gz_onprem | basename }}
+  changed_when: false
+
+- name: Recheck fetched logical backup before RDS import
+  ansible.builtin.command:
+    argv:
+      - gzip
+      - -t
+      - "{{ rds_operation_seed_sql_gz }}"
+  changed_when: false
+
+- name: Display selected backup metadata
+  ansible.builtin.debug:
+    msg: >-
+      Selected backup {{ rds_operation_seed_sql_gz_onprem | basename }}
+      with GTID {{ rds_operation_inbound_gtid_position }}.

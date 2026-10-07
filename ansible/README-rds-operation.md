@@ -3,8 +3,8 @@
 이 전달본은 Terraform이 만든 **운영 RDS**를 대상으로 다음 순서를 자동화한다.
 
 ```text
-초기 논리 덤프 → On-Prem → RDS GTID 동기화 → 승인된 Cutover
-→ RDS Primary → On-Prem DB 2대 Replica → 수동 DR 승격
+최신 정상 논리 덤프 선택 → RDS Import → On-Prem → RDS GTID 동기화
+→ 승인된 Cutover → RDS Primary → On-Prem DB 2대 Replica → 수동 DR 승격
 ```
 
 Terraform은 RDS, DB Subnet Group, Parameter Group, Secrets Manager를 만든다. 이 Ansible은
@@ -14,10 +14,12 @@ DB 내용·복제 역할만 다룬다. VPC, VPN, Route Table, Security Group, Ma
 
 - 기본 실행은 읽기 전용 preflight다.
 - Import·복제 구성 등 DB를 바꾸는 일반 실행은 `-e rds_operation_execute_mutations=true`가 필요하다.
+- 초기 동기화는 `db-primary`의 NFS 백업에서 최신 정상 gzip·SHA-256 검증 파일을 선택하고,
+  같은 덤프 헤더의 GTID를 자동 추출한다.
 - Cutover는 앱 쓰기 차단과 기술 검증을 마친 뒤
   `-e rds_operation_cutover_approved=true` 하나로 실행한다.
-- DR 승격은 추가로 `rds_operation_dr_writes_fenced=true`와
-  `rds_operation_dr_promotion_approved=true`가 필요하다.
+- DR 승격 대상은 `db-primary`로 고정하며, 실제 쓰기 전환은
+  `rds_operation_dr_writes_fenced=true`, `rds_operation_dr_promotion_approved=true`가 필요하다.
 - 비밀번호, AWS Access Key, RDS Secret 내용은 Git에 저장하지 않는다. 복제 비밀번호는
   Ansible Vault 또는 실행 시 `-e`로만 전달한다.
 
@@ -35,37 +37,26 @@ chmod 600 group_vars/rds_operation.yml
 Playbook은 실행 시 AWS API로 현재 RDS Endpoint·Port·Master Secret ARN을 자동 조회한다.
 DevOps VM에는 `rds:DescribeDBInstances`, `secretsmanager:GetSecretValue` 권한을 가진 AWS 인증이 필요하다.
 
+On-Prem `db-primary`의 백업 스크립트는 `mariadb-dump --master-data=2`로 생성되어야 한다.
+이 옵션은 dump 헤더에 주석 형태의 `gtid_slave_pos`를 기록하며, Ansible은 그 값을 실행하지 않고
+RDS external replication 시작 위치로만 사용한다.
+
 ## 실행 단계
 
 ```bash
 # 0. 변경 없는 RDS 입력값·MariaDB GTID 전제 조건 점검
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml --tags preflight
 
-# 1. RDS에 복제 계정·binlog 보존 설정, 논리 덤프 Import
+# 1. RDS를 향후 On-Prem Replica의 Source로 준비
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=rds-source \
   -e rds_operation_execute_mutations=true \
   -e rds_operation_outbound_repl_password='<Vault 또는 CI Secret>'
 
-ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
-  -e rds_operation_run_mode=seed \
-  -e rds_operation_execute_mutations=true
-
-# 2. 검증된 기존 방향: On-Prem primary → RDS GTID 동기화
-ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
-  -e rds_operation_run_mode=prepare-inbound-source \
+# 2. 최신 정상 NFS backup → RDS Import → 같은 dump GTID부터 On-Prem → RDS catch-up
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-initial-sync.yml \
   -e rds_operation_execute_mutations=true \
-  -e rds_operation_inbound_gtid_position='1-1-0000' \
   -e rds_operation_inbound_repl_password='<Vault 또는 CI Secret>'
-
-ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
-  -e rds_operation_run_mode=configure-rds-inbound \
-  -e rds_operation_execute_mutations=true \
-  -e rds_operation_inbound_gtid_position='1-1-0000' \
-  -e rds_operation_inbound_repl_password='<Vault 또는 CI Secret>'
-
-ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
-  -e rds_operation_run_mode=verify-rds-inbound
 
 # 3. Cutover: 앱 쓰기 차단·RDS catch-up을 확인한 뒤 단일 승인 플래그로 실행
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-cutover.yml \
@@ -80,12 +71,11 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=verify-onprem-replica
 
-# 5. T6 DR Drill: 지정 노드만 수동 승격한다. MaxScale/Route는 이 Playbook이 바꾸지 않는다.
+# 5. T6 DR Drill: db-primary만 수동 승격한다. MaxScale/Route는 이 Playbook이 바꾸지 않는다.
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-dr-promote.yml \
   -e rds_operation_execute_mutations=true \
   -e rds_operation_dr_writes_fenced=true \
-  -e rds_operation_dr_promotion_approved=true \
-  -e rds_operation_dr_promoted_inventory_hostname=db-primary
+  -e rds_operation_dr_promotion_approved=true
 ```
 
 ## 반드시 사람이 확인할 것
@@ -100,5 +90,5 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-dr-promote.yml \
 `RDS → On-Prem`은 표준 MariaDB external replica 구성이다. 기존 Primary였던 `db-primary`를
 Replica로 바꾸는 단계에는 MariaDB 11.8의 `MASTER_DEMOTE_TO_SLAVE=1`을 함께 사용해 기존 Primary의
 GTID 위치를 안전하게 Replica 위치로 넘긴다.
-코드는 이 구성을 준비하지만, 운영 전용 RDS에서 첫 1회는 반드시 `SHOW SLAVE STATUS\\G` 결과로
+코드는 이 구성을 준비하지만, 운영 전용 RDS에서 첫 1회는 반드시 `SHOW SLAVE STATUS\G` 결과로
 `Slave_IO_Running: Yes`, `Slave_SQL_Running: Yes`를 확인한 뒤 운영 완료로 선언한다.
