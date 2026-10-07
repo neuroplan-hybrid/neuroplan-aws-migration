@@ -3,18 +3,23 @@
 
 적용 범위 (#55) — --mode 로 구분
   --mode rto (기본, T3·T6)          : k6 LOGIN_MODE=iter로 측정한 CSV. T0·첫 실패(보조)·T3·User RTO,
-                                      실패 수·에러율·p95/p99 (실패 0건이면 "User RTO 0초")
+                                      장애 구간(T0→T3) 실패 수·에러율·p95/p99 (실패 0건이면 "User RTO 0초")
   --mode continuity (T1·T2·T5·T8)  : k6 LOGIN_MODE=session 권장. 실패 --allow-fail(기본 0)건 이하면 PASS (RTO 계산 안 함)
 사전 조건: 장애 주입 PC와 k6 측정 PC NTP 동기화 (시각 차이가 그대로 RTO 오차)
+--t0 는 두 mode 모두 필수 (#56 리뷰): 첫 실패 기준 시간이 공식 User RTO로 쓰이는 것을 막고,
+  장애 주입 전 워밍업 구간의 일시 실패를 판정에서 제외한다
 
 정의
-  T0  = 장애 주입 적용 시각 (--t0, 직접 기록한 값). 없으면 첫 실패 시각으로 대신하고 그렇게 표시
+  T0  = 장애 주입 실제 적용 시각 (--t0, 직접 기록한 값, 필수)
   첫 실패 = T0 이후 처음으로 step_ok=0 이 기록된 시각 (보조 지표)
   T3  = 로그인 → 조회 → 저장이 30초(--stable) 동안 연속 성공하기 시작한 시각 (#55)
   User RTO = T3 − T0
+  장애 구간 = [T0, T3] (T3 미확정이면 [T0, 측정 끝]) — 발표용 실패 수·에러율·p95/p99는 이 구간 기준,
+             전체 측정 구간 값은 참고용
 
 실행 위치: 측정용 PC (Python 3.8+, 표준 라이브러리만)
   python3 scripts/k6_rto_summary_1007.py k6_1016-1000.csv --t0 "2026-10-16 10:00:00"
+    --mode continuity 예: ... --t0 "2026-10-14 10:00:00" --mode continuity
   (k6 실행 시 K6_CSV_TIME_FORMAT=rfc3339_nano 권장 → 초 미만 정밀도)
 """
 import argparse
@@ -79,7 +84,7 @@ def load(path):
             if name == "step_ok" and step in STEPS:
                 rows.append((ts, step, float(row["metric_value"]) >= 1, tags.get("ip", ""), tags.get("code", "")))
             elif name == "http_req_duration" and step in STEPS:
-                durs[step].append(float(row["metric_value"]))
+                durs[step].append((ts, float(row["metric_value"])))
             elif name == "last_saved_completed":
                 saves.append((ts, int(float(row["metric_value"]))))
     rows.sort(key=lambda x: x[0])
@@ -107,10 +112,11 @@ def find_t3(rows, start, stable):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv")
-    ap.add_argument("--t0", help='장애 주입 적용 시각, 예: "2026-10-16 10:00:00" (KST) 또는 ISO8601')
+    ap.add_argument("--t0", required=True,
+                    help='장애 주입 실제 적용 시각 (필수), 예: "2026-10-16 10:00:00" (KST) 또는 ISO8601')
     ap.add_argument("--stable", type=float, default=30.0, help="복구 판정 연속 성공 시간(초), 기본 30 (#55 T3 정의)")
     ap.add_argument("--mode", choices=("rto", "continuity"), default="rto",
-                    help="rto = T3·T6 User RTO (기본) / continuity = T1·T2·T5 연속성 PASS/FAIL")
+                    help="rto = T3·T6 User RTO (기본) / continuity = T1·T2·T5·T8 연속성 PASS/FAIL")
     ap.add_argument("--allow-fail", type=int, default=0,
                     help="continuity 모드 허용 실패 건수 (기본 0)")
     a = ap.parse_args()
@@ -119,22 +125,30 @@ def main():
     if not rows:
         sys.exit("step_ok 행이 없음 — k6_rto_1007.js로 측정한 CSV인지 확인")
 
-    t0 = parse_t0(a.t0) if a.t0 else None
-    begin = t0 or rows[0][0]
-    fails = [r for r in rows if not r[2] and r[0] >= begin]
+    t0 = parse_t0(a.t0)
+    if not (rows[0][0] <= t0 <= rows[-1][0]):
+        sys.exit(f"T0 {fmt(t0)} 가 측정 구간({fmt(rows[0][0])} ~ {fmt(rows[-1][0])}) 밖 — 날짜·시간대(KST) 확인")
+    fails = [r for r in rows if not r[2] and r[0] >= t0]
     first_fail = fails[0][0] if fails else None
-    t0_eff = t0 or first_fail
+    pre_fail = sum(1 for r in rows if not r[2] and r[0] < t0)
 
-    print(f"측정 구간: {fmt(rows[0][0])} ~ {fmt(rows[-1][0])} (KST), step_ok {len(rows)}건")
-    total_fail = sum(1 for r in rows if not r[2])
-    print(f"전체 실패 {total_fail}건 / 에러율 {total_fail / len(rows) * 100:.2f}%")
-    for s in STEPS:
-        n = sum(1 for r in rows if r[1] == s)
-        nf = sum(1 for r in rows if r[1] == s and not r[2])
-        p95, p99 = pct(durs[s], 95), pct(durs[s], 99)
-        p95s = f"{p95:.0f}ms" if p95 is not None else "-"
-        p99s = f"{p99:.0f}ms" if p99 is not None else "-"
-        print(f"  {s:<5} {n:>6}건  실패 {nf:>5}  p95 {p95s:>8}  p99 {p99s:>8}")
+    def stats(lo, hi, title):
+        win = [r for r in rows if lo <= r[0] <= hi]
+        nf = sum(1 for r in win if not r[2])
+        rate = f"{nf / len(win) * 100:.2f}%" if win else "-"
+        print(f"{title}: {fmt(lo)} ~ {fmt(hi)}  step_ok {len(win)}건, 실패 {nf}건, 에러율 {rate}")
+        for s in STEPS:
+            n = sum(1 for r in win if r[1] == s)
+            sf = sum(1 for r in win if r[1] == s and not r[2])
+            d = [v for ts, v in durs[s] if lo <= ts <= hi]
+            p95, p99 = pct(d, 95), pct(d, 99)
+            p95s = f"{p95:.0f}ms" if p95 is not None else "-"
+            p99s = f"{p99:.0f}ms" if p99 is not None else "-"
+            print(f"  {s:<5} {n:>6}건  실패 {sf:>5}  p95 {p95s:>8}  p99 {p99s:>8}")
+
+    stats(rows[0][0], rows[-1][0], "[참고] 전체 측정 구간")
+    if pre_fail:
+        print(f"  ※ T0 이전 실패 {pre_fail}건 (워밍업 등) — 판정에서 제외")
 
     ips = {}
     for ts, _s, ok, ip, _c in rows:
@@ -146,22 +160,26 @@ def main():
             print(f"  {ip:<16} {fmt(a1)} ~ {fmt(a2)}")
 
     print()
-    print(f"T0 (장애 주입)      : {fmt(t0) if t0 else '- (미입력 → 첫 실패로 대신)'}")
-    print(f"첫 실패 [보조]      : {fmt(first_fail)}" + (f"  (T0 + {(first_fail - t0).total_seconds():.1f}초)" if t0 and first_fail else ""))
+    print(f"T0 (장애 주입)      : {fmt(t0)}")
+    print(f"첫 실패 [보조]      : {fmt(first_fail)}" + (f"  (T0 + {(first_fail - t0).total_seconds():.1f}초)" if first_fail else ""))
     n_login = sum(1 for r in rows if r[1] == "login")
     n_state = sum(1 for r in rows if r[1] == "state")
     if a.mode == "rto" and n_state and n_login < n_state * 0.5:
         print(f"⚠ login {n_login}건 / state {n_state}건 — LOGIN_MODE=session으로 측정한 CSV로 보임. "
               "T3·T6은 LOGIN_MODE=iter 측정 기준(#55·#56) — 결과 해석 주의")
+
     if a.mode == "continuity":
         verdict = "PASS" if len(fails) <= a.allow_fail else "FAIL"
         print(f"[연속성 T1·T2·T5·T8] {verdict} — T0 이후 사용자 실패 {len(fails)}건 (허용 {a.allow_fail}건)")
         if fails:
             print(f"  실패 구간: {fmt(fails[0][0])} ~ {fmt(fails[-1][0])}, 단계별 " +
                   ", ".join(f"{s} {sum(1 for r in fails if r[1] == s)}" for s in STEPS))
+        stats(t0, rows[-1][0], "[발표] T0 이후 구간")
         return
+
     if not fails:
         print("[복구시간 T3·T6] T0 이후 사용자 실패 없음 → User RTO 0초 (사용자 영향 없음)")
+        stats(t0, rows[-1][0], "[발표] T0 이후 구간")
         return
     # 마지막 실패 이후 안정 구간 기준 (중간에 잠깐 회복했다 다시 실패한 경우는 복구로 보지 않음)
     last_fail = fails[-1][0]
@@ -169,14 +187,9 @@ def main():
     if t3 is None:
         print(f"T3 (안정 복구)      : 미확정 — 마지막 실패 {fmt(last_fail)} 이후 {a.stable:.0f}초 연속 성공 구간 없음")
     else:
-        rto = (t3 - t0_eff).total_seconds()
-        label = "User RTO" if t0 else "User RTO (첫 실패 기준, T0 미입력)"
         print(f"T3 (안정 복구)      : {fmt(t3)}  (3개 요청 {a.stable:.0f}초 연속 성공 시작)")
-        print(f"{label:<19}: {rto:.1f}초")
-    fail_window = [r for r in rows if t0_eff <= r[0] <= (t3 or rows[-1][0])]
-    nf = sum(1 for r in fail_window if not r[2])
-    if fail_window:
-        print(f"장애 구간 실패 {nf}건 / 구간 에러율 {nf / len(fail_window) * 100:.1f}%")
+        print(f"User RTO           : {(t3 - t0).total_seconds():.1f}초  (T3 − T0)")
+    stats(t0, t3 or rows[-1][0], "[발표] 장애·복구 구간 T0→T3" if t3 else "[발표] 장애 구간 T0→측정 끝 (T3 미확정)")
 
     before = [s for s in saves if s[0] < first_fail]          # 첫 실패 직전까지 성공한 마지막 쓰기
     after = [s for s in saves if t3 and s[0] >= t3]            # 안정 복구 이후 첫 쓰기
