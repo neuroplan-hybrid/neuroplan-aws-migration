@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""k6_rto_summary_1007.py — k6 CSV에서 User RTO 계산 (#22·#53 기준)
+"""k6_rto_summary_1007.py — k6 CSV에서 User RTO·연속성 판정 (#53 정의, #55 T3 안정화 조건)
+
+적용 범위 (#55)
+  T3·T6 (복구시간) : User RTO = T3 − T0, 첫 실패(보조), 실패 수·에러율·p95/p99
+  T1·T2·T5 (연속성): User RTO가 핵심 지표가 아님 → --allow-fail 로 실패 0건(또는 허용 이하) PASS/FAIL
+사전 조건: 장애 주입 PC와 k6 측정 PC NTP 동기화 (시각 차이가 그대로 RTO 오차)
 
 정의
   T0  = 장애 주입 적용 시각 (--t0, 직접 기록한 값). 없으면 첫 실패 시각으로 대신하고 그렇게 표시
   첫 실패 = T0 이후 처음으로 step_ok=0 이 기록된 시각 (보조 지표)
-  T3  = 로그인·조회·저장이 모두 성공하고 그 뒤 30초(--stable) 동안 실패가 없는 구간의 시작
+  T3  = 로그인 → 조회 → 저장이 30초(--stable) 동안 연속 성공하기 시작한 시각 (#55)
+  연속성(T1·T2·T5) = T0 이후 실패 0건이면 PASS, --allow-fail N 이면 N건 이하 PASS
   User RTO = T3 − T0
 
 실행 위치: 측정용 PC (Python 3.8+, 표준 라이브러리만)
@@ -102,7 +108,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv")
     ap.add_argument("--t0", help='장애 주입 적용 시각, 예: "2026-10-16 10:00:00" (KST) 또는 ISO8601')
-    ap.add_argument("--stable", type=float, default=30.0, help="복구 판정 연속 성공 시간(초), 기본 30")
+    ap.add_argument("--stable", type=float, default=30.0, help="복구 판정 연속 성공 시간(초), 기본 30 (#55 T3 정의)")
+    ap.add_argument("--allow-fail", type=int, default=None,
+                    help="연속성 시나리오(T1·T2·T5) 허용 실패 건수 — 주면 PASS/FAIL 판정 출력")
     a = ap.parse_args()
 
     rows, durs, saves = load(a.csv)
@@ -139,8 +147,11 @@ def main():
     print(f"T0 (장애 주입)      : {fmt(t0) if t0 else '- (미입력 → 첫 실패로 대신)'}")
     print(f"첫 실패 [보조]      : {fmt(first_fail)}" + (f"  (T0 + {(first_fail - t0).total_seconds():.1f}초)" if t0 and first_fail else ""))
     if not fails:
-        print("T0 이후 실패 없음 → User RTO 0 (서비스 중단 없음)")
+        print(f"연속성 PASS — T0 이후 실패 0건 (서비스 중단 없음, User RTO 0) [T1·T2·T5 기준, #55]")
         return
+    if a.allow_fail is not None:
+        verdict = "PASS" if len(fails) <= a.allow_fail else "FAIL"
+        print(f"연속성 {verdict} — T0 이후 실패 {len(fails)}건 (허용 {a.allow_fail}건) [T1·T2·T5 기준, #55]")
     # 마지막 실패 이후 안정 구간 기준 (중간에 잠깐 회복했다 다시 실패한 경우는 복구로 보지 않음)
     last_fail = fails[-1][0]
     t3 = find_t3(rows, last_fail, a.stable)
