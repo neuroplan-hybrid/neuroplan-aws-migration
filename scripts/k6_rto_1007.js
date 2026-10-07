@@ -5,19 +5,23 @@
 //   - RTO 정의는 #53 (T0 = 장애 주입 실제 적용 시각, 첫 실패 = 보조, T3 = 안정화 시각, User RTO = T3 − T0)
 //   - T3의 안정화 조건은 #55에서 새로 정함: 로그인·조회·저장이 30초 동안 연속 성공하는 구간의 시작 시각
 //
-// 적용 범위 (#55)
-//   - T3·T6 (복구시간): User RTO 계산 (T0·첫 실패·T3·실패 수·에러율·p95/p99)
-//   - T1·T2·T5 (연속성): 같은 스크립트를 부하·증적 도구로 사용, summary --allow-fail 로 실패 0건(또는 허용 이하) PASS/FAIL
+// 적용 범위·실행 기준 (#55, #56 리뷰)
+//   - T3·T6 (복구시간, User RTO): LOGIN_MODE=iter + summary --mode rto
+//       매 반복 로그인 → 조회 → 저장 전체 트랜잭션으로 T3 판정 (#55 T3 정의와 직접 일치)
+//       → 측정 종료 후 테스트 계정 세션 정리 (운영 사용자 세션은 건드리지 않음, 절차·SQL은 정현)
+//   - T1·T2·T5·T8 (연속성): LOGIN_MODE=session + summary --mode continuity
+//       사용자 요청 실패 0건(또는 허용 이하) 확인, 세션 누적 최소화
 //
 // 사전 조건 (#56 리뷰)
 //   - 시각 동기화: 장애 주입 PC와 k6 측정 PC 모두 NTP 동기화 확인 (timedatectl → "System clock synchronized: yes")
 //     시연 직전 두 PC에서 `date '+%F %T.%N %z'` 비교, T0는 장애 주입 명령이 실제 적용된 시각을 KST로 기록
 //   - 세션 누적: /api/auth/login은 호출마다 jwt_sessions에 새 행을 넣음 (Cookie Jar를 지워도 DB 세션은 남음)
 //     LOGIN_MODE=iter(기본): 매 반복 로그인 — 로그인까지 포함한 사용자 트랜잭션 전체를 매회 검증하려는 의도적 선택
-//       → 세션 수 ≈ 계정당 DURATION/(PAUSE+응답시간), 예: 20분·PAUSE 1초면 계정당 약 1,000건 → 테스트 후 테스트 계정 세션 정리(정현)
+//       → 세션 수 ≈ 계정당 DURATION/(PAUSE+응답시간), 예: 20분·PAUSE 1초면 계정당 약 1,000건 → T3·T6 종료 후 테스트 계정 세션 정리
 //     LOGIN_MODE=session: 처음·실패 직후·SESSION_RENEW(기본 10분)마다 로그인, 나머지는 Cookie 재사용
 //       → Access Token TTL 15분 전에 선제 재로그인 → 장애 없이 토큰 만료로 생기는 가짜 401을 막음 (#56 리뷰 3)
 //       → 20분 측정 시 로그인 2~3회 + 장애 횟수 수준. /api/auth/refresh는 요청 형식 미확인이라 재로그인으로 갱신
+//       → Backend JWT_ACCESS_TTL(현재 15분)을 바꾸면 SESSION_RENEW와 아래 15분 검사도 함께 확인
 //
 // 실행 위치: 측정용 PC (학원망 밖이 이상적), k6 v0.54+
 //   read -rsp 'TEST_PASSWORD: ' TEST_PASSWORD; echo

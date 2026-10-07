@@ -2,8 +2,9 @@
 """k6_rto_summary_1007.py — k6 CSV에서 User RTO·연속성 판정 (#53 정의, #55 T3 안정화 조건)
 
 적용 범위 (#55) — --mode 로 구분
-  --mode rto (기본, T3·T6)      : T0·첫 실패(보조)·T3·User RTO, 실패 수·에러율·p95/p99 (실패 0건이면 "User RTO 0초")
-  --mode continuity (T1·T2·T5) : 실패 --allow-fail(기본 0)건 이하면 PASS, 초과면 FAIL (User RTO는 계산하지 않음)
+  --mode rto (기본, T3·T6)          : k6 LOGIN_MODE=iter로 측정한 CSV. T0·첫 실패(보조)·T3·User RTO,
+                                      실패 수·에러율·p95/p99 (실패 0건이면 "User RTO 0초")
+  --mode continuity (T1·T2·T5·T8)  : k6 LOGIN_MODE=session 권장. 실패 --allow-fail(기본 0)건 이하면 PASS (RTO 계산 안 함)
 사전 조건: 장애 주입 PC와 k6 측정 PC NTP 동기화 (시각 차이가 그대로 RTO 오차)
 
 정의
@@ -147,9 +148,14 @@ def main():
     print()
     print(f"T0 (장애 주입)      : {fmt(t0) if t0 else '- (미입력 → 첫 실패로 대신)'}")
     print(f"첫 실패 [보조]      : {fmt(first_fail)}" + (f"  (T0 + {(first_fail - t0).total_seconds():.1f}초)" if t0 and first_fail else ""))
+    n_login = sum(1 for r in rows if r[1] == "login")
+    n_state = sum(1 for r in rows if r[1] == "state")
+    if a.mode == "rto" and n_state and n_login < n_state * 0.5:
+        print(f"⚠ login {n_login}건 / state {n_state}건 — LOGIN_MODE=session으로 측정한 CSV로 보임. "
+              "T3·T6은 LOGIN_MODE=iter 측정 기준(#55·#56) — 결과 해석 주의")
     if a.mode == "continuity":
         verdict = "PASS" if len(fails) <= a.allow_fail else "FAIL"
-        print(f"[연속성 T1·T2·T5] {verdict} — T0 이후 사용자 실패 {len(fails)}건 (허용 {a.allow_fail}건)")
+        print(f"[연속성 T1·T2·T5·T8] {verdict} — T0 이후 사용자 실패 {len(fails)}건 (허용 {a.allow_fail}건)")
         if fails:
             print(f"  실패 구간: {fmt(fails[0][0])} ~ {fmt(fails[-1][0])}, 단계별 " +
                   ", ".join(f"{s} {sum(1 for r in fails if r[1] == s)}" for s in STEPS))
