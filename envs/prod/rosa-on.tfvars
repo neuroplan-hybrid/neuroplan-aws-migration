@@ -11,6 +11,7 @@ route53_routing_mode = "off"
 
 # ROSA HCP Worker
 # 공식 기본값과 비용 산정 기준을 명시적으로 고정한다.
+openshift_version    = "4.20.40"
 compute_machine_type = "m5.xlarge"
 rosa_replicas        = 3
 
