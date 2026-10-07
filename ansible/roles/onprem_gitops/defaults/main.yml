@@ -29,11 +29,11 @@ onprem_gitops_destination_server: "https://kubernetes.default.svc"
 
 # 안전장치 1:
 # 검증 전에는 Application 자체를 생성하지 않는다.
-onprem_gitops_application_enabled: true
+onprem_gitops_application_enabled: false
 
 # 안전장치 2:
 # 1차 Application과 전환 전에는 Auto Sync하지 않는다.
-onprem_gitops_automated_sync: true
+onprem_gitops_automated_sync: false
 
 # =========================================================
 # Legacy 1차 환경 보호
