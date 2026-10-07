@@ -1,0 +1,8 @@
+---
+- name: Configure NeuroPlan On-Prem GitOps
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  roles:
+    - role: onprem_gitops
