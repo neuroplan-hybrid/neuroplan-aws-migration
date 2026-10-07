@@ -21,8 +21,7 @@ rds_operation_outbound_repl_hosts:
 rds_operation_binlog_retention_hours: 168
 rds_operation_replication_use_ssl: false
 
-# 초기 이관 중 On-Prem Source 계정. RDS private DB subnet만 허용한다.
-rds_operation_inbound_source_host: "192.168.44.51"
+# 초기 이관 중 On-Prem Source 계정. 실제 Source 주소는 inventory의 onprem_primary에서 자동 해석한다.
 rds_operation_inbound_source_port: 3306
 rds_operation_inbound_repl_username: "onprem_to_rds"
 rds_operation_inbound_repl_password: ""  # Ansible Vault 또는 -e 전용

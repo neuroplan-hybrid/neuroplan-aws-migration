@@ -5,25 +5,124 @@
       - rds_operation_execute_mutations | bool
     fail_msg: "seed에는 rds_operation_execute_mutations=true가 필요합니다."
 
-- name: Discover latest valid On-Prem backup and matching GTID
-  ansible.builtin.import_tasks: discover-seed-backup.yml
-
 - name: Load RDS Master credentials
   ansible.builtin.import_tasks: load-master-secret.yml
 
-- name: Import selected logical backup into RDS
+- name: Check whether the target database already exists in RDS
   ansible.builtin.shell: |
-    set -o pipefail
-    gzip -dc "{{ rds_operation_seed_sql_gz }}"       | mariadb --protocol=tcp           --host="{{ rds_operation_endpoint }}"           --port="{{ rds_operation_port }}"           --user="{{ rds_operation_master_secret.username }}"           --password="$RDS_MASTER_PASSWORD"
+    mariadb --protocol=tcp --batch --skip-column-names \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "SELECT COUNT(*) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{{ rds_operation_database }}';"
   args:
     executable: /bin/bash
   environment:
     RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  register: rds_operation_seed_database_state
+  changed_when: false
+  no_log: true
+
+- name: Set initial-sync database state
+  ansible.builtin.set_fact:
+    rds_operation_seed_database_exists: "{{ rds_operation_seed_database_state.stdout | trim == '1' }}"
+  changed_when: false
+
+- name: Check for prior initial-sync marker
+  ansible.builtin.stat:
+    path: "{{ rds_operation_initial_sync_marker }}"
+  register: rds_operation_initial_sync_marker_stat
+  changed_when: false
+
+- name: Require no stale initial-sync marker before a fresh import
+  ansible.builtin.assert:
+    that:
+      - not rds_operation_initial_sync_marker_stat.stat.exists
+    fail_msg: >-
+      RDS DB는 없지만 이전 initial-sync marker가 남아 있습니다.
+      marker를 검토한 뒤 명시적으로 정리하고 다시 실행하세요.
+  when: not (rds_operation_seed_database_exists | bool)
+  changed_when: false
+
+- name: Require initial-sync marker for an existing RDS database
+  ansible.builtin.assert:
+    that:
+      - rds_operation_initial_sync_marker_stat.stat.exists
+    fail_msg: >-
+      RDS에 {{ rds_operation_database }} DB가 이미 있어 Import를 다시 실행하지 않습니다.
+      이 자동화가 만든 marker가 없으므로 DB 상태를 확인한 뒤 수동으로 조치하세요.
+  when: rds_operation_seed_database_exists | bool
+  changed_when: false
+
+- name: Load prior initial-sync marker for safe resume
+  ansible.builtin.slurp:
+    src: "{{ rds_operation_initial_sync_marker }}"
+  register: rds_operation_initial_sync_marker_raw
+  when: rds_operation_seed_database_exists | bool
+  no_log: true
+
+- name: Parse prior initial-sync marker for safe resume
+  ansible.builtin.set_fact:
+    rds_operation_initial_sync_marker_data: >-
+      {{ rds_operation_initial_sync_marker_raw.content | b64decode | from_json }}
+  when: rds_operation_seed_database_exists | bool
+  no_log: true
+
+- name: Require prior marker identity to match the current initial-sync target
+  ansible.builtin.assert:
+    that:
+      - (rds_operation_initial_sync_marker_data.rds_identifier | default('')) == rds_operation_identifier
+      - (rds_operation_initial_sync_marker_data.database | default('')) == rds_operation_database
+      - (rds_operation_initial_sync_marker_data.source_inventory_hostname | default('')) == rds_operation_inbound_source_inventory_hostname
+      - (rds_operation_initial_sync_marker_data.source_host | default('')) == rds_operation_inbound_source_host
+    fail_msg: >-
+      기존 initial-sync marker의 RDS·DB·On-Prem Source가 현재 대상과 다릅니다.
+      다른 대상의 marker로 자동 재개하지 않습니다.
+  when: rds_operation_seed_database_exists | bool
+  changed_when: false
+  no_log: true
+
+- name: Restore initial-sync metadata for safe resume
+  ansible.builtin.set_fact:
+    rds_operation_seed_sql_gz_onprem: "{{ rds_operation_initial_sync_marker_data.source_backup }}"
+    rds_operation_seed_sha256: "{{ rds_operation_initial_sync_marker_data.sha256 }}"
+    rds_operation_inbound_gtid_position: "{{ rds_operation_initial_sync_marker_data.gtid }}"
+  when: rds_operation_seed_database_exists | bool
+  no_log: true
+
+- name: Require valid prior initial-sync marker metadata
+  ansible.builtin.assert:
+    that:
+      - rds_operation_seed_sql_gz_onprem | default('') | length > 0
+      - (rds_operation_seed_sha256 | default('')) is match('^[0-9a-f]{64}$')
+      - (rds_operation_inbound_gtid_position | default('')) is match('^[0-9]+-[0-9]+-[0-9]+$')
+    fail_msg: "기존 initial-sync marker의 backup SHA-256 또는 GTID 형식이 올바르지 않습니다."
+  when: rds_operation_seed_database_exists | bool
+  changed_when: false
+
+- name: Discover latest valid On-Prem backup and matching GTID
+  ansible.builtin.import_tasks: discover-seed-backup.yml
+  when: not (rds_operation_seed_database_exists | bool)
+
+- name: Import selected logical backup into RDS
+  ansible.builtin.shell: |
+    set -o pipefail
+    gzip -dc "{{ rds_operation_seed_sql_gz }}" \
+      | mariadb --protocol=tcp \
+          --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+          --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  when: not (rds_operation_seed_database_exists | bool)
   no_log: true
 
 - name: Verify imported database collation
   ansible.builtin.shell: |
-    mariadb --protocol=tcp --batch --skip-column-names       --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}"       --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD"       --execute "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{{ rds_operation_database }}';"
+    mariadb --protocol=tcp --batch --skip-column-names \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{{ rds_operation_database }}';"
   args:
     executable: /bin/bash
   environment:
@@ -37,3 +136,20 @@
     that:
       - rds_operation_imported_collation.stdout | trim == rds_operation_database_collation
     fail_msg: "Import된 DB 기본 Collation이 {{ rds_operation_database_collation }}이 아닙니다."
+
+- name: Save initial-sync marker after successful import
+  ansible.builtin.copy:
+    dest: "{{ rds_operation_initial_sync_marker }}"
+    content: >-
+      {{ {
+        'rds_identifier': rds_operation_identifier,
+        'database': rds_operation_database,
+        'source_inventory_hostname': rds_operation_inbound_source_inventory_hostname,
+        'source_host': rds_operation_inbound_source_host,
+        'source_backup': rds_operation_seed_sql_gz_onprem,
+        'sha256': rds_operation_seed_sha256,
+        'gtid': rds_operation_inbound_gtid_position
+      } | to_nice_json }}
+    mode: "0600"
+  when: not (rds_operation_seed_database_exists | bool)
+  no_log: true

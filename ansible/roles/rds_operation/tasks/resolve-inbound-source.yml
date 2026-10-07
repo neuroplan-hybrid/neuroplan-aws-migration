@@ -1,0 +1,22 @@
+---
+- name: Require exactly one On-Prem primary for RDS inbound replication
+  ansible.builtin.assert:
+    that:
+      - groups.get("onprem_primary", []) | length == 1
+    fail_msg: "RDS inbound replication에는 inventory의 onprem_primary 한 대가 필요합니다."
+  changed_when: false
+
+- name: Resolve RDS inbound replication source from inventory
+  ansible.builtin.set_fact:
+    rds_operation_inbound_source_inventory_hostname: "{{ groups['onprem_primary'] | first }}"
+    rds_operation_inbound_source_host: >-
+      {{ hostvars[groups['onprem_primary'] | first].ansible_host
+         | default(groups['onprem_primary'] | first, true) }}
+  changed_when: false
+
+- name: Require resolved RDS inbound replication source address
+  ansible.builtin.assert:
+    that:
+      - rds_operation_inbound_source_host | length > 0
+    fail_msg: "inventory의 onprem_primary에서 RDS inbound replication Source 주소를 찾지 못했습니다."
+  changed_when: false
