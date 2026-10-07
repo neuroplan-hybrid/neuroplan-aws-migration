@@ -6,6 +6,49 @@
     fail_msg: "rds_operation_node_role이 올바르지 않습니다."
   tags: [always]
 
+- name: Discover current RDS connection values on the controller
+  ansible.builtin.import_tasks: discover-rds-connection.yml
+  when:
+    - rds_operation_node_role == "controller"
+  tags: [always]
+
+- name: Require a controller-discovered RDS connection for On-Prem replica work
+  ansible.builtin.assert:
+    that:
+      - groups.get("rds_controller", []) | length == 1
+      - hostvars[groups["rds_controller"][0]].rds_operation_endpoint | default("") | length > 0
+      - hostvars[groups["rds_controller"][0]].rds_operation_port | default(0) | int > 0
+    fail_msg: >-
+      On-Prem Replica 작업에는 rds_controller가 먼저 자동 조회한
+      RDS Endpoint와 Port가 필요합니다.
+  when:
+    - rds_operation_node_role == "onprem_replica"
+    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica"]
+  tags: [always]
+
+- name: Use the RDS connection discovered by the controller on On-Prem replicas
+  ansible.builtin.set_fact:
+    rds_operation_endpoint: >-
+      {{ hostvars[groups["rds_controller"][0]].rds_operation_endpoint }}
+    rds_operation_port: >-
+      {{ hostvars[groups["rds_controller"][0]].rds_operation_port | int }}
+  when:
+    - rds_operation_node_role == "onprem_replica"
+    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica"]
+  no_log: true
+  tags: [always]
+
+- name: Require a nonempty RDS endpoint before On-Prem replica work
+  ansible.builtin.assert:
+    that:
+      - rds_operation_endpoint | length > 0
+      - rds_operation_port | int > 0
+    fail_msg: "On-Prem Replica 작업에 사용할 RDS Endpoint 또는 Port가 비어 있습니다."
+  when:
+    - rds_operation_node_role == "onprem_replica"
+    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica"]
+  tags: [always]
+
 - name: Run controller preflight
   ansible.builtin.import_tasks: controller-preflight.yml
   when:

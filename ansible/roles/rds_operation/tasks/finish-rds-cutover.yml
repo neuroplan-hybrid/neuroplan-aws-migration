@@ -2,10 +2,8 @@
 - name: Require explicit cutover approval
   ansible.builtin.assert:
     that:
-      - rds_operation_execute_mutations | bool
-      - rds_operation_application_writes_fenced | bool
       - rds_operation_cutover_approved | bool
-    fail_msg: "RDS cutover 승인 플래그가 부족합니다."
+    fail_msg: "RDS cutover는 rds_operation_cutover_approved=true가 필요합니다."
 
 - name: Load RDS Master credentials
   ansible.builtin.import_tasks: load-master-secret.yml

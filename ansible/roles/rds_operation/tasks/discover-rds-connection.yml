@@ -1,0 +1,67 @@
+---
+- name: Require RDS discovery inputs
+  ansible.builtin.assert:
+    that:
+      - rds_operation_identifier | length > 0
+      - rds_operation_aws_region | length > 0
+    fail_msg: "rds_operation_identifier와 rds_operation_aws_region을 입력하세요."
+
+- name: Verify AWS CLI credentials for RDS discovery
+  ansible.builtin.command:
+    argv:
+      - aws
+      - sts
+      - get-caller-identity
+      - --output
+      - json
+  changed_when: false
+  no_log: true
+
+- name: Read current RDS endpoint and Master Secret ARN
+  ansible.builtin.command:
+    argv:
+      - aws
+      - rds
+      - describe-db-instances
+      - --region
+      - "{{ rds_operation_aws_region }}"
+      - --db-instance-identifier
+      - "{{ rds_operation_identifier }}"
+      - --query
+      - "DBInstances[0].{status:DBInstanceStatus,endpoint:Endpoint.Address,port:Endpoint.Port,master_secret_arn:MasterUserSecret.SecretArn}"
+      - --output
+      - json
+  register: rds_operation_rds_connection_raw
+  changed_when: false
+  no_log: true
+
+- name: Parse discovered RDS connection values
+  ansible.builtin.set_fact:
+    rds_operation_rds_connection: "{{ rds_operation_rds_connection_raw.stdout | from_json }}"
+  no_log: true
+
+- name: Require an available RDS with managed Master Secret
+  ansible.builtin.assert:
+    that:
+      - rds_operation_rds_connection.status == "available"
+      - rds_operation_rds_connection.endpoint is string
+      - rds_operation_rds_connection.endpoint | length > 0
+      - rds_operation_rds_connection.port | int > 0
+      - rds_operation_rds_connection.master_secret_arn is string
+      - rds_operation_rds_connection.master_secret_arn | length > 0
+    fail_msg: >-
+      RDS {{ rds_operation_identifier }}가 아직 available 상태가 아니거나
+      Master Secret이 준비되지 않았습니다.
+
+- name: Use current RDS connection values for this run
+  ansible.builtin.set_fact:
+    rds_operation_endpoint: "{{ rds_operation_rds_connection.endpoint }}"
+    rds_operation_port: "{{ rds_operation_rds_connection.port | int }}"
+    rds_operation_master_secret_arn: "{{ rds_operation_rds_connection.master_secret_arn }}"
+  no_log: true
+
+- name: Display discovered RDS endpoint
+  ansible.builtin.debug:
+    msg: >-
+      RDS {{ rds_operation_identifier }} discovered:
+      {{ rds_operation_endpoint }}:{{ rds_operation_port }}

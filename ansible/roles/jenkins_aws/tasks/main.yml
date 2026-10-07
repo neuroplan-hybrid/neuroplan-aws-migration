@@ -3,11 +3,13 @@
 # Jenkins AWS Extension
 #
 # 기존 1차 Jenkins는 재설치하거나 초기화하지 않는다.
-# 아래 3가지만 추가/동기화한다.
+# 아래 구성을 기존 Jenkins에 추가/동기화한다.
 #
 # 1. neuroplan-gitops-ssh Credential
 # 2. jenkins-ecr-aws Credential
 # 3. neuroplan-aws-ci Pipeline Job
+# 4. On-Prem ECR Pull Secret 갱신용 Kubernetes 최소 권한
+# 5. Jenkins 전용 On-Prem Kubernetes kubeconfig
 # =========================================================
 
 
@@ -35,6 +37,23 @@
       - (application_github_repository | default('') | length) > 0
       - (application_git_branch | default('') | length) > 0
       - (jenkins_aws_pipeline_script_path | default('') | length) > 0
+      - (jenkins_ecr_refresh_job_name | default('') | length) > 0
+      - (jenkins_ecr_refresh_pipeline_script_path | default('') | length) > 0
+      - (jenkins_ecr_refresh_schedule | default('') | length) > 0
+
+      - (jenkins_onprem_namespace | default('') | length) > 0
+      - (jenkins_ecr_pull_secret_name | default('') | length) > 0
+      - (jenkins_ecr_registry | default('') | length) > 0
+      - (jenkins_k8s_service_account_name | default('') | length) > 0
+      - (jenkins_k8s_role_name | default('') | length) > 0
+      - (jenkins_k8s_rolebinding_name | default('') | length) > 0
+      - (jenkins_k8s_token_secret_name | default('') | length) > 0
+      - (jenkins_kubeconfig_path | default('') | length) > 0
+      - (jenkins_kubectl_path | default('') | length) > 0
+      - (jenkins_onprem_cluster_name | default('') | length) > 0
+      - (jenkins_onprem_context_name | default('') | length) > 0
+      - (jenkins_onprem_api_server | default('') | length) > 0
+      - (jenkins_onprem_admin_kubeconfig | default('') | length) > 0
     fail_msg: "Required Jenkins AWS extension variables are missing."
   no_log: true
   become: false
@@ -78,6 +97,398 @@
   become_user: "{{ jenkins_aws_runtime_user }}"
   become_flags: "-H"
   no_log: true
+
+
+# =========================================================
+# On-Prem Kubernetes Access for ECR Pull Secret
+#
+# Jenkins는 application/ecr-pull-secret 하나에 대해서만
+# get/update/patch 권한을 가진다.
+# =========================================================
+
+
+# ---------------------------------------------------------
+# On-Prem 관리자 kubeconfig 사전 확인
+# ---------------------------------------------------------
+
+- name: Check On-Prem Kubernetes admin kubeconfig
+  ansible.builtin.stat:
+    path: "{{ jenkins_onprem_admin_kubeconfig }}"
+  register: jenkins_onprem_admin_kubeconfig_stat
+
+- name: Validate On-Prem Kubernetes admin kubeconfig
+  ansible.builtin.assert:
+    that:
+      - jenkins_onprem_admin_kubeconfig_stat.stat.exists
+      - jenkins_onprem_admin_kubeconfig_stat.stat.isreg
+    fail_msg: >-
+      On-Prem Kubernetes admin kubeconfig was not found:
+      {{ jenkins_onprem_admin_kubeconfig }}
+
+
+# ---------------------------------------------------------
+# On-Prem Kubernetes API / application Namespace 확인
+# ---------------------------------------------------------
+
+- name: Verify On-Prem Kubernetes API access
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig
+      - "{{ jenkins_onprem_admin_kubeconfig }}"
+      - get
+      - namespace
+      - "{{ jenkins_onprem_namespace }}"
+      - -o
+      - name
+  register: jenkins_onprem_namespace_check
+  changed_when: false
+  check_mode: false
+
+
+# ---------------------------------------------------------
+# ecr-pull-secret 최초 Bootstrap
+#
+# Jenkins에는 임의 Secret create 권한을 주지 않는다.
+# Secret이 없을 때만 관리자가 틀을 생성한다.
+# 이후 실제 ECR 인증 정보는 Jenkins Pipeline이 갱신한다.
+# ---------------------------------------------------------
+
+- name: Check On-Prem ECR pull Secret
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig
+      - "{{ jenkins_onprem_admin_kubeconfig }}"
+      - get
+      - secret
+      - "{{ jenkins_ecr_pull_secret_name }}"
+      - -n
+      - "{{ jenkins_onprem_namespace }}"
+      - --ignore-not-found
+      - -o
+      - name
+  register: jenkins_ecr_pull_secret_check
+  changed_when: false
+  check_mode: false
+
+- name: Bootstrap On-Prem ECR pull Secret
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig
+      - "{{ jenkins_onprem_admin_kubeconfig }}"
+      - create
+      - secret
+      - docker-registry
+      - "{{ jenkins_ecr_pull_secret_name }}"
+      - -n
+      - "{{ jenkins_onprem_namespace }}"
+      - "--docker-server={{ jenkins_ecr_registry }}"
+      - "--docker-username=AWS"
+      - "--docker-password=bootstrap-placeholder"
+  when:
+    - not ansible_check_mode
+    - (jenkins_ecr_pull_secret_check.stdout | trim | length) == 0
+
+
+# ---------------------------------------------------------
+# Jenkins ServiceAccount / 최소 RBAC / Token Secret
+# ---------------------------------------------------------
+
+- name: Configure Jenkins On-Prem Kubernetes RBAC
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig
+      - "{{ jenkins_onprem_admin_kubeconfig }}"
+      - apply
+      - -f
+      - "-"
+    stdin: |
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: {{ jenkins_k8s_service_account_name }}
+        namespace: {{ jenkins_onprem_namespace }}
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: Role
+      metadata:
+        name: {{ jenkins_k8s_role_name }}
+        namespace: {{ jenkins_onprem_namespace }}
+      rules:
+        - apiGroups: [""]
+          resources: ["secrets"]
+          resourceNames:
+            - {{ jenkins_ecr_pull_secret_name }}
+          verbs:
+            - get
+            - update
+            - patch
+      ---
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: {{ jenkins_k8s_rolebinding_name }}
+        namespace: {{ jenkins_onprem_namespace }}
+      subjects:
+        - kind: ServiceAccount
+          name: {{ jenkins_k8s_service_account_name }}
+          namespace: {{ jenkins_onprem_namespace }}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: {{ jenkins_k8s_role_name }}
+      ---
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: {{ jenkins_k8s_token_secret_name }}
+        namespace: {{ jenkins_onprem_namespace }}
+        annotations:
+          kubernetes.io/service-account.name: {{ jenkins_k8s_service_account_name }}
+      type: kubernetes.io/service-account-token
+  register: jenkins_k8s_rbac_apply
+  changed_when: >-
+    (' created' in jenkins_k8s_rbac_apply.stdout)
+    or
+    (' configured' in jenkins_k8s_rbac_apply.stdout)
+  when: not ansible_check_mode
+
+
+# ---------------------------------------------------------
+# ServiceAccount Token 생성 완료 대기
+# ---------------------------------------------------------
+
+- name: Wait for Jenkins Kubernetes ServiceAccount token
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig
+      - "{{ jenkins_onprem_admin_kubeconfig }}"
+      - get
+      - secret
+      - "{{ jenkins_k8s_token_secret_name }}"
+      - -n
+      - "{{ jenkins_onprem_namespace }}"
+      - -o
+      - "jsonpath={.data.token}"
+  register: jenkins_k8s_token_b64
+  changed_when: false
+  check_mode: false
+  retries: 10
+  delay: 2
+  until: (jenkins_k8s_token_b64.stdout | trim | length) > 0
+  no_log: true
+  when: not ansible_check_mode
+
+
+# ---------------------------------------------------------
+# Kubernetes CA 조회
+# ---------------------------------------------------------
+
+- name: Read Jenkins Kubernetes CA certificate
+  ansible.builtin.command:
+    argv:
+      - kubectl
+      - --kubeconfig
+      - "{{ jenkins_onprem_admin_kubeconfig }}"
+      - get
+      - secret
+      - "{{ jenkins_k8s_token_secret_name }}"
+      - -n
+      - "{{ jenkins_onprem_namespace }}"
+      - -o
+      - "jsonpath={.data.ca\\.crt}"
+  register: jenkins_k8s_ca_b64
+  changed_when: false
+  check_mode: false
+  no_log: true
+  when: not ansible_check_mode
+
+
+# ---------------------------------------------------------
+# Jenkins 전용 kubeconfig 디렉터리
+# ---------------------------------------------------------
+
+- name: Create Jenkins kubeconfig directory
+  ansible.builtin.file:
+    path: "{{ jenkins_kubeconfig_path | dirname }}"
+    state: directory
+    owner: "{{ jenkins_aws_runtime_user }}"
+    group: "{{ jenkins_aws_runtime_user }}"
+    mode: "0700"
+  become: true
+  when: not ansible_check_mode
+
+
+# ---------------------------------------------------------
+# Jenkins 전용 kubeconfig 생성
+# ---------------------------------------------------------
+
+- name: Configure Jenkins On-Prem Kubernetes kubeconfig
+  ansible.builtin.copy:
+    dest: "{{ jenkins_kubeconfig_path }}"
+    owner: "{{ jenkins_aws_runtime_user }}"
+    group: "{{ jenkins_aws_runtime_user }}"
+    mode: "0600"
+    content: |
+      apiVersion: v1
+      kind: Config
+      clusters:
+        - name: {{ jenkins_onprem_cluster_name }}
+          cluster:
+            server: {{ jenkins_onprem_api_server }}
+            certificate-authority-data: {{ jenkins_k8s_ca_b64.stdout }}
+      users:
+        - name: {{ jenkins_k8s_service_account_name }}
+          user:
+            token: {{ jenkins_k8s_token_b64.stdout | b64decode }}
+      contexts:
+        - name: {{ jenkins_onprem_context_name }}
+          context:
+            cluster: {{ jenkins_onprem_cluster_name }}
+            user: {{ jenkins_k8s_service_account_name }}
+            namespace: {{ jenkins_onprem_namespace }}
+      current-context: {{ jenkins_onprem_context_name }}
+  become: true
+  no_log: true
+  when: not ansible_check_mode
+
+
+# ---------------------------------------------------------
+# Jenkins -> On-Prem Kubernetes Context 확인
+# ---------------------------------------------------------
+
+- name: Verify Jenkins Kubernetes context
+  ansible.builtin.command:
+    argv:
+      - "{{ jenkins_kubectl_path }}"
+      - --kubeconfig
+      - "{{ jenkins_kubeconfig_path }}"
+      - config
+      - current-context
+  register: jenkins_k8s_context_check
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ jenkins_aws_runtime_user }}"
+  become_flags: "-H"
+  when: not ansible_check_mode
+
+- name: Assert Jenkins Kubernetes context
+  ansible.builtin.assert:
+    that:
+      - (jenkins_k8s_context_check.stdout | trim) == jenkins_onprem_context_name
+    fail_msg: "Jenkins On-Prem Kubernetes context validation failed."
+  when: not ansible_check_mode
+
+
+# ---------------------------------------------------------
+# ecr-pull-secret 최소 권한 검증
+# ---------------------------------------------------------
+
+- name: Verify Jenkins ECR pull Secret permissions
+  ansible.builtin.command:
+    argv:
+      - "{{ jenkins_kubectl_path }}"
+      - --kubeconfig
+      - "{{ jenkins_kubeconfig_path }}"
+      - auth
+      - can-i
+      - "{{ item }}"
+      - "secret/{{ jenkins_ecr_pull_secret_name }}"
+      - -n
+      - "{{ jenkins_onprem_namespace }}"
+  loop:
+    - get
+    - update
+    - patch
+  register: jenkins_ecr_secret_permissions
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ jenkins_aws_runtime_user }}"
+  become_flags: "-H"
+  when: not ansible_check_mode
+
+- name: Assert Jenkins ECR pull Secret permissions
+  ansible.builtin.assert:
+    that:
+      - (item.stdout | trim) == 'yes'
+    fail_msg: >-
+      Jenkins cannot {{ item.item }}
+      {{ jenkins_onprem_namespace }}/{{ jenkins_ecr_pull_secret_name }}.
+  loop: "{{ jenkins_ecr_secret_permissions.results | default([]) }}"
+  when: not ansible_check_mode
+
+
+# ---------------------------------------------------------
+# 과도한 Secret 권한이 없는지 확인
+# ---------------------------------------------------------
+
+- name: Verify Jenkins cannot create arbitrary Secrets
+  ansible.builtin.command:
+    argv:
+      - "{{ jenkins_kubectl_path }}"
+      - --kubeconfig
+      - "{{ jenkins_kubeconfig_path }}"
+      - auth
+      - can-i
+      - create
+      - secrets
+      - -n
+      - "{{ jenkins_onprem_namespace }}"
+  register: jenkins_arbitrary_secret_create_check
+  changed_when: false
+  failed_when: jenkins_arbitrary_secret_create_check.rc not in [0, 1]
+  check_mode: false
+  become: true
+  become_user: "{{ jenkins_aws_runtime_user }}"
+  become_flags: "-H"
+  when: not ansible_check_mode
+
+- name: Assert Jenkins cannot create arbitrary Secrets
+  ansible.builtin.assert:
+    that:
+      - (jenkins_arbitrary_secret_create_check.stdout | trim) == 'no'
+    fail_msg: "Jenkins has excessive Kubernetes Secret permissions."
+  when: not ansible_check_mode
+
+
+# ---------------------------------------------------------
+# 다른 Secret 접근 불가 확인
+# ---------------------------------------------------------
+
+- name: Verify Jenkins cannot read ServiceAccount token Secret
+  ansible.builtin.command:
+    argv:
+      - "{{ jenkins_kubectl_path }}"
+      - --kubeconfig
+      - "{{ jenkins_kubeconfig_path }}"
+      - auth
+      - can-i
+      - get
+      - "secret/{{ jenkins_k8s_token_secret_name }}"
+      - -n
+      - "{{ jenkins_onprem_namespace }}"
+  register: jenkins_other_secret_access_check
+  changed_when: false
+  failed_when: jenkins_other_secret_access_check.rc not in [0, 1]
+  check_mode: false
+  become: true
+  become_user: "{{ jenkins_aws_runtime_user }}"
+  become_flags: "-H"
+  when: not ansible_check_mode
+
+- name: Assert Jenkins cannot read other Secrets
+  ansible.builtin.assert:
+    that:
+      - (jenkins_other_secret_access_check.stdout | trim) == 'no'
+    fail_msg: >-
+      Jenkins can access a Secret outside the intended ECR pull Secret.
+  when: not ansible_check_mode
 
 
 # =========================================================
@@ -339,4 +750,231 @@
     (jenkins_aws_job_needs_create | bool)
     or
     (jenkins_aws_job_needs_update | bool)
+  when: jenkins_aws_check_only | bool
+
+
+# =========================================================
+# Jenkins ECR Pull Secret Refresh Job
+#
+# 애플리케이션 Build/Push 없이 6시간마다
+# On-Prem ecr-pull-secret만 갱신한다.
+# =========================================================
+
+
+# ---------------------------------------------------------
+# 현재 Refresh Job 확인
+# ---------------------------------------------------------
+
+- name: Check NeuroPlan ECR Secret Refresh Jenkins job
+  ansible.builtin.uri:
+    url: "{{ jenkins_api_url }}/job/{{ jenkins_ecr_refresh_job_name }}/config.xml"
+    method: GET
+    url_username: "{{ jenkins_admin_user }}"
+    url_password: "{{ jenkins_api_token }}"
+    force_basic_auth: true
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: jenkins_ecr_refresh_job_check
+  changed_when: false
+  check_mode: false
+  no_log: true
+  become: false
+
+
+# ---------------------------------------------------------
+# 원하는 Refresh Job XML 렌더링
+# ---------------------------------------------------------
+
+- name: Render desired NeuroPlan ECR Secret Refresh Jenkins configuration
+  ansible.builtin.set_fact:
+    jenkins_ecr_refresh_desired_config_raw: >-
+      {{
+        lookup(
+          'ansible.builtin.template',
+          'neuroplan-ecr-secret-refresh.xml.j2'
+        )
+      }}
+  no_log: true
+
+
+# ---------------------------------------------------------
+# 원하는 XML 정규화
+# ---------------------------------------------------------
+
+- name: Normalize desired NeuroPlan ECR Secret Refresh Jenkins configuration
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import sys
+        import xml.etree.ElementTree as ET
+
+        xml_data = sys.stdin.read()
+        root = ET.fromstring(xml_data)
+
+        for elem in root.iter():
+            plugin = elem.attrib.get("plugin")
+
+            if plugin and "@" in plugin:
+                elem.attrib["plugin"] = plugin.split("@", 1)[0]
+
+            if elem.text is not None and not elem.text.strip():
+                elem.text = None
+
+            if elem.tail is not None and not elem.tail.strip():
+                elem.tail = None
+
+        sys.stdout.write(
+            ET.tostring(
+                root,
+                encoding="unicode",
+                short_empty_elements=True
+            )
+        )
+    stdin: "{{ jenkins_ecr_refresh_desired_config_raw }}"
+  register: jenkins_ecr_refresh_desired_config_normalized
+  changed_when: false
+  check_mode: false
+  no_log: true
+
+
+# ---------------------------------------------------------
+# 현재 Refresh Job XML 정규화
+# ---------------------------------------------------------
+
+- name: Normalize current NeuroPlan ECR Secret Refresh Jenkins configuration
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import sys
+        import xml.etree.ElementTree as ET
+
+        xml_data = sys.stdin.read()
+        root = ET.fromstring(xml_data)
+
+        for elem in root.iter():
+            plugin = elem.attrib.get("plugin")
+
+            if plugin and "@" in plugin:
+                elem.attrib["plugin"] = plugin.split("@", 1)[0]
+
+            if elem.text is not None and not elem.text.strip():
+                elem.text = None
+
+            if elem.tail is not None and not elem.tail.strip():
+                elem.tail = None
+
+        sys.stdout.write(
+            ET.tostring(
+                root,
+                encoding="unicode",
+                short_empty_elements=True
+            )
+        )
+    stdin: "{{ jenkins_ecr_refresh_job_check.content }}"
+  register: jenkins_ecr_refresh_current_config_normalized
+  changed_when: false
+  check_mode: false
+  when: jenkins_ecr_refresh_job_check.status == 200
+  no_log: true
+
+
+# ---------------------------------------------------------
+# 생성 / 업데이트 여부 판단
+# ---------------------------------------------------------
+
+- name: Determine NeuroPlan ECR Secret Refresh Jenkins job state
+  ansible.builtin.set_fact:
+    jenkins_ecr_refresh_job_needs_create: >-
+      {{
+        jenkins_ecr_refresh_job_check.status == 404
+      }}
+
+    jenkins_ecr_refresh_job_needs_update: >-
+      {{
+        jenkins_ecr_refresh_job_check.status == 200
+        and
+        (
+          jenkins_ecr_refresh_current_config_normalized.stdout | default('')
+        )
+        !=
+        (
+          jenkins_ecr_refresh_desired_config_normalized.stdout | default('')
+        )
+      }}
+  changed_when: false
+
+
+# ---------------------------------------------------------
+# Refresh Job 생성
+# ---------------------------------------------------------
+
+- name: Create NeuroPlan ECR Secret Refresh Jenkins job
+  ansible.builtin.uri:
+    url: "{{ jenkins_api_url }}/createItem?name={{ jenkins_ecr_refresh_job_name }}"
+    method: POST
+    url_username: "{{ jenkins_admin_user }}"
+    url_password: "{{ jenkins_api_token }}"
+    force_basic_auth: true
+    headers:
+      Content-Type: "application/xml"
+    body: "{{ jenkins_ecr_refresh_desired_config_raw }}"
+    body_format: raw
+    status_code:
+      - 200
+      - 201
+  when:
+    - jenkins_ecr_refresh_job_needs_create | bool
+    - not (jenkins_aws_check_only | bool)
+  no_log: true
+  become: false
+
+
+# ---------------------------------------------------------
+# Refresh Job 업데이트
+# ---------------------------------------------------------
+
+- name: Update NeuroPlan ECR Secret Refresh Jenkins job
+  ansible.builtin.uri:
+    url: "{{ jenkins_api_url }}/job/{{ jenkins_ecr_refresh_job_name }}/config.xml"
+    method: POST
+    url_username: "{{ jenkins_admin_user }}"
+    url_password: "{{ jenkins_api_token }}"
+    force_basic_auth: true
+    headers:
+      Content-Type: "application/xml"
+    body: "{{ jenkins_ecr_refresh_desired_config_raw }}"
+    body_format: raw
+    status_code:
+      - 200
+  when:
+    - jenkins_ecr_refresh_job_needs_update | bool
+    - not (jenkins_aws_check_only | bool)
+  no_log: true
+  become: false
+
+
+# ---------------------------------------------------------
+# Check Mode 결과 표시
+# ---------------------------------------------------------
+
+- name: Show Jenkins ECR Secret Refresh job validation result
+  ansible.builtin.debug:
+    msg: >-
+      {% if jenkins_ecr_refresh_job_needs_create | bool %}
+      Jenkins job '{{ jenkins_ecr_refresh_job_name }}' does not exist and would be CREATED.
+      {% elif jenkins_ecr_refresh_job_needs_update | bool %}
+      Jenkins job '{{ jenkins_ecr_refresh_job_name }}' exists but configuration differs and would be UPDATED.
+      {% else %}
+      Jenkins job '{{ jenkins_ecr_refresh_job_name }}' exists and configuration is synchronized.
+      {% endif %}
+  changed_when: >-
+    (jenkins_ecr_refresh_job_needs_create | bool)
+    or
+    (jenkins_ecr_refresh_job_needs_update | bool)
   when: jenkins_aws_check_only | bool

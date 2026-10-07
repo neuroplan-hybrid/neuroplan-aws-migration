@@ -1,3 +1,4 @@
+openshift_version = "4.20.40"
 # 단계: operation
 
 enable_rosa          = true

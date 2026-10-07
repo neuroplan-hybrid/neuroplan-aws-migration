@@ -2,6 +2,8 @@
 - name: Configure the operating RDS as a replication source
   hosts: rds_controller
   gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
   vars:
     rds_operation_node_role: controller
   roles:
@@ -12,6 +14,8 @@
   become: true
   gather_facts: false
   serial: 1
+  vars_files:
+    - ../group_vars/rds_operation.yml
   vars:
     rds_operation_node_role: onprem_replica
   roles:

@@ -1,6 +1,6 @@
 aws_region        = "ap-northeast-2"
 cluster_name      = "neuroplan-rosa"
-openshift_version = "4.21.33"
+openshift_version = "4.20.40"
 
 # ROSA HCP Worker: 프로젝트 비용 산정 기준
 compute_machine_type = "m5.xlarge"
