@@ -4,16 +4,21 @@
 // 결과 분석은 k6_rto_summary_1007.py (T0 = 장애 주입 적용 시각, T3 = 3개 요청 30초 연속 성공 시작)
 //
 // 실행 위치: 측정용 PC (학원망 밖이 이상적), k6 v0.54+
-//   k6 run \
+//   read -rsp 'TEST_PASSWORD: ' TEST_PASSWORD; echo
+//   export TEST_PASSWORD
+//   K6_CSV_TIME_FORMAT=rfc3339_nano k6 run \
 //     -e BASE_URL=https://app.neuroplan.cloud \
 //     -e TEST_EMAILS=user1@example.com,user2@example.com \
-//     -e TEST_PASSWORD="$(read -rsp 'password: ' p; echo "$p")" \
 //     -e DURATION=20m \
 //     --out csv=k6_$(date +%m%d-%H%M).csv \
 //     scripts/k6_rto_1007.js
+//   unset TEST_PASSWORD
 //
-// 비밀번호는 스크립트·Git·CSV에 남기지 않는다 (__ENV로만 전달, 요청 본문은 CSV에 기록되지 않음).
-// 계정마다 비밀번호가 다르면 TEST_PASSWORDS=pw1,pw2 (TEST_EMAILS와 같은 순서).
+// 비밀번호는 k6 명령행(-e)에 넣지 않는다 — 실행 중 프로세스 목록(ps)에 인자가 보임 (#56 리뷰).
+// 환경변수로 export하면 k6가 __ENV.TEST_PASSWORD로 읽는다 (k6 run 기본: 시스템 환경변수 포함).
+// 스크립트·Git·CSV에도 남지 않음 (요청 본문은 CSV에 기록되지 않음).
+// 계정마다 비밀번호가 다르면 TEST_PASSWORDS=pw1,pw2 (TEST_EMAILS와 같은 순서, 같은 방식으로 export).
+// 시연 전: 테스트 계정으로 DURATION=1m 시험 실행 → Cookie 유지·planId(plans[0].id / plan.id) 추출 확인
 
 import http from 'k6/http';
 import { check, sleep, fail } from 'k6';
