@@ -35,7 +35,7 @@ NeuroPlan 2차: 온프렘 Kubernetes → AWS/ROSA 단계적 하이브리드 마�
 | enable_dr_nlb | true | true | true | true |
 | route53_routing_mode | off | off | off → 10/13 weighted (ROSA 0 / 온프렘 100 → 단계 조정) | off → 10/13 weighted (ROSA 1 / 온프렘 0) |
 
-- `route53_routing_mode`: Route 53 헬스체크·`app` 레코드 스위치. poc·poc-cleanup은 `off`, rosa-on·operation은 10/13 ROSA Ingress LB DNS 입력과 함께 `weighted`로 전환 (B안, #33). 그 전까지 4단계 모두 `off`. `rosa_weight > 0`인데 LB DNS가 없으면 validation이 plan을 막음. 도메인·Hosted Zone은 `envs/prod/variables.tf` 기본값(bootstrap/dns), ROSA Ingress LB는 `primary_lb_dns_name`(null이면 온프렘 DR NLB만). 켜기 전 primary-health·dr-health의 `/actuator/health/routing` 200 확인 (#28·#34)
+- `route53_routing_mode`: Route 53 헬스체크·`app` 레코드 스위치. poc·poc-cleanup은 `off`, rosa-on·operation은 10/13 ROSA Ingress LB DNS 입력과 함께 `weighted`로 전환 (B안, #33). 그 전까지 4단계 모두 `off`. `rosa_weight > 0`인데 LB DNS가 없으면 validation이 plan을 막음. 도메인·Hosted Zone은 `envs/prod/variables.tf` 기본값(bootstrap/dns), ROSA Ingress LB는 `primary_lb_dns_name`(null이면 온프렘 DR NLB만). 켜기 전 primary-health·dr-health의 `/actuator/health/routing` 200 확인 (#28·#34), ROSA TLS preflight(Route `externalCertificate`·Router RBAC·외부 HTTPS SAN/Issuer) 통과 확인 — 실패하면 `off` 유지 (#59)
 - 켠 뒤 계획 (B안): 이관·운영 모두 `weighted` — 이관은 가중치 조정, 운영은 ROSA 1 / 온프렘 0 (Weighted 기반 active-passive). `failover`는 모듈 호환용 값으로만 남김
 
 리소스 ON/OFF는 `main.tf` 수정이 아니라 **tfvars 전환**으로 한다.
