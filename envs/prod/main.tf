@@ -53,6 +53,13 @@ module "edge" {
   enable_route53_routing = var.route53_routing_mode != "off"
   app_routing_policy     = var.route53_routing_mode == "off" ? "none" : var.route53_routing_mode
 
+  domain_name         = var.domain_name
+  hosted_zone_id      = var.hosted_zone_id
+  primary_lb_dns_name = var.primary_lb_dns_name
+  primary_lb_zone_id  = var.primary_lb_zone_id
+  rosa_weight         = var.rosa_weight
+  onprem_weight       = var.onprem_weight
+
   tags = { Owner = "heejae" }
 }
 

@@ -8,7 +8,14 @@ enable_rds           = true
 rds_mode             = "operation"
 enable_nat           = true
 enable_dr_nlb        = true
-route53_routing_mode = "off"
+route53_routing_mode = "off" # TODO(10/13): "weighted" — rosa-on과 같은 커밋에서 LB DNS와 함께 전환
+
+# Route 53 운영 (B안 active-passive): ROSA 1 / 온프렘 0 — ROSA 레코드가 모두 unhealthy일 때만 온프렘(DR NLB) 응답
+# T6 Failback 동안은 ROSA 0 / 온프렘 1로 고정 (시나리오 4.10)
+# weighted 전환 조건은 rosa-on.tfvars와 같음 (⑤ ROSA TLS preflight 통과, #59)
+primary_lb_dns_name = null # TODO(10/13): ROSA Ingress LB DNS (rosa-on과 같은 값). weighted에서 null이면 validation이 plan 중단
+rosa_weight         = 1
+onprem_weight       = 0
 
 # ROSA HCP Worker
 # rosa-on과 동일한 타입/대수로 유지한다.
