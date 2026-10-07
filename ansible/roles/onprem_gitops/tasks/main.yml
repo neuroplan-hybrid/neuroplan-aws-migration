@@ -1,0 +1,346 @@
+---
+# =========================================================
+# NeuroPlan 2차 On-Prem GitOps
+#
+# 기존 On-Prem Argo CD를 재사용한다.
+#
+# 이 Role은:
+#   - Argo CD를 새로 설치하지 않는다.
+#   - 기존 k3s Cluster 등록을 수정하지 않는다.
+#   - 기존 1차 Application을 수정하지 않는다.
+#   - 2차 neuroplan-onprem-dr Application만 관리한다.
+#
+# GitOps:
+#   neuroplan-hybrid/neuroplan-gitops
+#     -> overlays/onprem-dr
+#     -> On-Prem Kubernetes / application
+# =========================================================
+
+
+# ---------------------------------------------------------
+# 변수 검증
+# ---------------------------------------------------------
+
+- name: Validate On-Prem GitOps variables
+  ansible.builtin.assert:
+    that:
+      - (onprem_gitops_kubectl_path | length) > 0
+      - (onprem_gitops_kubeconfig | length) > 0
+      - (onprem_gitops_argocd_namespace | length) > 0
+      - (onprem_gitops_target_namespace | length) > 0
+      - (onprem_gitops_repository_url | length) > 0
+      - (onprem_gitops_repository_revision | length) > 0
+      - (onprem_gitops_repository_path | length) > 0
+      - (onprem_gitops_application_name | length) > 0
+      - (onprem_gitops_destination_server | length) > 0
+      - (onprem_gitops_legacy_main_application | length) > 0
+      - (onprem_gitops_legacy_dr_application | length) > 0
+    fail_msg: "Required On-Prem GitOps variables are missing."
+  changed_when: false
+
+
+# ---------------------------------------------------------
+# Application Manifest 사전 렌더링
+# ---------------------------------------------------------
+
+- name: Render On-Prem Argo CD Application manifest
+  ansible.builtin.set_fact:
+    onprem_gitops_application_manifest: >-
+      {{
+        lookup(
+          'ansible.builtin.template',
+          'application.yaml.j2'
+        )
+      }}
+  changed_when: false
+
+
+- name: Validate On-Prem Argo CD Application YAML
+  ansible.builtin.set_fact:
+    onprem_gitops_application_documents: >-
+      {{ onprem_gitops_application_manifest | from_yaml_all | list }}
+  changed_when: false
+
+
+# ---------------------------------------------------------
+# Live 환경 Read-Only Preflight
+#
+# Check Mode에서도 조회한다.
+# Kubernetes 리소스 변경은 하지 않는다.
+# ---------------------------------------------------------
+
+- name: Verify kubectl binary
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - version
+      - --client
+  register: onprem_gitops_kubectl_check
+  changed_when: false
+  check_mode: false
+
+
+- name: Verify On-Prem target namespace
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - get
+      - namespace
+      - "{{ onprem_gitops_target_namespace }}"
+  register: onprem_gitops_target_namespace_check
+  changed_when: false
+  check_mode: false
+
+
+- name: Verify existing Argo CD namespace
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - get
+      - namespace
+      - "{{ onprem_gitops_argocd_namespace }}"
+  register: onprem_gitops_argocd_namespace_check
+  changed_when: false
+  check_mode: false
+
+
+- name: Verify Argo CD Application CRD
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - get
+      - crd
+      - applications.argoproj.io
+  register: onprem_gitops_application_crd_check
+  changed_when: false
+  check_mode: false
+
+
+# ---------------------------------------------------------
+# 기존 Application 보호
+# ---------------------------------------------------------
+
+- name: Read legacy On-Prem Application
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - get
+      - application
+      - "{{ onprem_gitops_legacy_main_application }}"
+      - -n
+      - "{{ onprem_gitops_argocd_namespace }}"
+      - -o
+      - json
+  register: onprem_gitops_legacy_main
+  changed_when: false
+  failed_when: onprem_gitops_legacy_main.rc not in [0, 1]
+  check_mode: false
+
+
+- name: Read legacy k3s DR Application
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - get
+      - application
+      - "{{ onprem_gitops_legacy_dr_application }}"
+      - -n
+      - "{{ onprem_gitops_argocd_namespace }}"
+      - -o
+      - json
+  register: onprem_gitops_legacy_dr
+  changed_when: false
+  failed_when: onprem_gitops_legacy_dr.rc not in [0, 1]
+  check_mode: false
+
+
+- name: Parse legacy k3s DR Application
+  ansible.builtin.set_fact:
+    onprem_gitops_legacy_dr_data: >-
+      {{ onprem_gitops_legacy_dr.stdout | from_json }}
+  changed_when: false
+  when:
+    - onprem_gitops_protect_legacy_dr | bool
+    - onprem_gitops_legacy_dr.rc == 0
+
+
+- name: Protect existing k3s DR connection
+  ansible.builtin.assert:
+    that:
+      - onprem_gitops_legacy_dr.rc == 0
+      - >-
+        onprem_gitops_legacy_dr_data.spec.destination.server
+        == onprem_gitops_legacy_dr_expected_server
+    fail_msg: >-
+      Existing k3s DR Application does not match the expected
+      configuration. Stop before changing On-Prem GitOps.
+    success_msg: >-
+      Existing k3s DR Application is intact and remains unmanaged
+      by this Role.
+  when: onprem_gitops_protect_legacy_dr | bool
+
+
+# ---------------------------------------------------------
+# 현재 Application 전체 확인
+# ---------------------------------------------------------
+
+- name: Read current Argo CD Applications
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - get
+      - applications.argoproj.io
+      - -n
+      - "{{ onprem_gitops_argocd_namespace }}"
+      - -o
+      - "custom-columns=NAME:.metadata.name,REPO:.spec.source.repoURL,PATH:.spec.source.path,DEST_SERVER:.spec.destination.server,DEST_NS:.spec.destination.namespace,SYNC:.status.sync.status,HEALTH:.status.health.status"
+  register: onprem_gitops_existing_applications
+  changed_when: false
+  check_mode: false
+
+
+- name: Show current Argo CD Applications
+  ansible.builtin.debug:
+    var: onprem_gitops_existing_applications.stdout_lines
+  changed_when: false
+
+
+# ---------------------------------------------------------
+# 동일 이름 Application 존재 여부 확인
+# ---------------------------------------------------------
+
+- name: Check existing 2nd phase On-Prem Application
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - get
+      - application
+      - "{{ onprem_gitops_application_name }}"
+      - -n
+      - "{{ onprem_gitops_argocd_namespace }}"
+      - -o
+      - json
+  register: onprem_gitops_existing_target
+  changed_when: false
+  failed_when: onprem_gitops_existing_target.rc not in [0, 1]
+  check_mode: false
+
+
+- name: Validate existing 2nd phase Application definition
+  ansible.builtin.assert:
+    that:
+      - >-
+        (onprem_gitops_existing_target.stdout | from_json).spec.source.repoURL
+        == onprem_gitops_repository_url
+      - >-
+        (onprem_gitops_existing_target.stdout | from_json).spec.source.path
+        == onprem_gitops_repository_path
+      - >-
+        (onprem_gitops_existing_target.stdout | from_json).spec.destination.server
+        == onprem_gitops_destination_server
+      - >-
+        (onprem_gitops_existing_target.stdout | from_json).spec.destination.namespace
+        == onprem_gitops_target_namespace
+    fail_msg: >-
+      Existing neuroplan-onprem-dr Application points to an unexpected
+      repository, path, or destination.
+  when: onprem_gitops_existing_target.rc == 0
+
+
+# ---------------------------------------------------------
+# 충돌 방지
+#
+# 1차 On-Prem Application이 존재하는 동안에는
+# 2차 Application Auto Sync 활성화를 허용하지 않는다.
+# ---------------------------------------------------------
+
+- name: Prevent overlapping automated On-Prem CD
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (
+          (onprem_gitops_application_enabled | bool)
+          and
+          (onprem_gitops_automated_sync | bool)
+          and
+          (onprem_gitops_legacy_main.rc == 0)
+        )
+    fail_msg: >-
+      Legacy On-Prem Application still exists.
+      Do not enable automated sync for neuroplan-onprem-dr until
+      the 1st phase On-Prem Application has been safely retired.
+  changed_when: false
+
+
+# ---------------------------------------------------------
+# 2차 Application 생성
+#
+# 기본값은 disabled.
+# enabled=true여도 automated_sync=false가 기본이다.
+# ---------------------------------------------------------
+
+- name: Apply NeuroPlan 2nd phase On-Prem Application
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - apply
+      - -f
+      - "-"
+    stdin: "{{ onprem_gitops_application_manifest }}"
+  register: onprem_gitops_application_apply
+  changed_when: >
+    ('created' in onprem_gitops_application_apply.stdout)
+    or
+    ('configured' in onprem_gitops_application_apply.stdout)
+  when:
+    - not ansible_check_mode
+    - onprem_gitops_application_enabled | bool
+
+
+- name: Show NeuroPlan 2nd phase On-Prem Application
+  ansible.builtin.command:
+    argv:
+      - "{{ onprem_gitops_kubectl_path }}"
+      - --kubeconfig
+      - "{{ onprem_gitops_kubeconfig }}"
+      - get
+      - application
+      - "{{ onprem_gitops_application_name }}"
+      - -n
+      - "{{ onprem_gitops_argocd_namespace }}"
+      - -o
+      - wide
+  register: onprem_gitops_application_status
+  changed_when: false
+  check_mode: false
+  when:
+    - onprem_gitops_application_enabled | bool
+    - not ansible_check_mode
+
+
+- name: Explain deferred 2nd phase Application creation
+  ansible.builtin.debug:
+    msg:
+      - "2nd phase On-Prem Application creation is disabled."
+      - "Existing 1st phase On-Prem Application is not changed."
+      - "Existing k3s DR Application is not changed."
+      - "Repository: {{ onprem_gitops_repository_url }}"
+      - "Path: {{ onprem_gitops_repository_path }}"
+      - "Run with -e onprem_gitops_application_enabled=true only after review."
+  when: not (onprem_gitops_application_enabled | bool)

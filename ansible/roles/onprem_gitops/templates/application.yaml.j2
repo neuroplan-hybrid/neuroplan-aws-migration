@@ -1,0 +1,35 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+
+metadata:
+  name: {{ onprem_gitops_application_name }}
+  namespace: {{ onprem_gitops_argocd_namespace }}
+
+spec:
+  project: default
+
+  source:
+    repoURL: "{{ onprem_gitops_repository_url }}"
+    targetRevision: "{{ onprem_gitops_repository_revision }}"
+    path: "{{ onprem_gitops_repository_path }}"
+
+  destination:
+    server: "{{ onprem_gitops_destination_server }}"
+    namespace: "{{ onprem_gitops_target_namespace }}"
+
+  syncPolicy:
+{% if onprem_gitops_automated_sync | bool %}
+    automated:
+      prune: true
+      selfHeal: true
+{% endif %}
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 1m

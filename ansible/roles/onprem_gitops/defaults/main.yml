@@ -1,0 +1,48 @@
+---
+# =========================================================
+# Existing On-Prem Argo CD
+# =========================================================
+
+onprem_gitops_kubectl_path: "/usr/local/bin/kubectl"
+onprem_gitops_kubeconfig: "/home/devops/.kube/config"
+
+onprem_gitops_argocd_namespace: "argocd"
+onprem_gitops_target_namespace: "application"
+
+# =========================================================
+# GitOps Repository
+# =========================================================
+
+# Public Repository이므로 HTTPS Read 방식으로 연결
+onprem_gitops_repository_url: "https://github.com/neuroplan-hybrid/neuroplan-gitops.git"
+onprem_gitops_repository_revision: "main"
+onprem_gitops_repository_path: "overlays/onprem-dr"
+
+# =========================================================
+# 2차 Argo CD Application
+# =========================================================
+
+onprem_gitops_application_name: "neuroplan-onprem-dr"
+
+# 기존 On-Prem Argo CD가 설치된 Local Kubernetes
+onprem_gitops_destination_server: "https://kubernetes.default.svc"
+
+# 안전장치 1:
+# 검증 전에는 Application 자체를 생성하지 않는다.
+onprem_gitops_application_enabled: true
+
+# 안전장치 2:
+# 1차 Application과 전환 전에는 Auto Sync하지 않는다.
+onprem_gitops_automated_sync: true
+
+# =========================================================
+# Legacy 1차 환경 보호
+# =========================================================
+
+onprem_gitops_legacy_main_application: "neuroplan-login-mvp"
+
+onprem_gitops_legacy_dr_application: "neuroplan-login-mvp-dr"
+onprem_gitops_legacy_dr_expected_server: "https://192.168.34.71:6443"
+
+# 기존 k3s DR 연결 보호
+onprem_gitops_protect_legacy_dr: true
