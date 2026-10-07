@@ -1,0 +1,48 @@
+---
+# 운영 RDS 최초 동기화 전용.
+# 같은 실행 안에서 최신 정상 On-Prem dump 선택 → Import → 해당 dump GTID부터 RDS 복제를 시작한다.
+
+- name: Select latest valid backup and import it into RDS
+  hosts: rds_controller
+  gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
+  vars:
+    rds_operation_node_role: controller
+    rds_operation_run_mode: seed
+  roles:
+    - role: rds_operation
+
+- name: Create the temporary On-Prem to RDS replication account
+  hosts: onprem_primary
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
+  vars:
+    rds_operation_node_role: cutover_source
+    rds_operation_run_mode: prepare-inbound-source
+  roles:
+    - role: rds_operation
+
+- name: Start On-Prem to RDS GTID catch-up from the selected dump GTID
+  hosts: rds_controller
+  gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
+  vars:
+    rds_operation_node_role: controller
+    rds_operation_run_mode: configure-rds-inbound
+  roles:
+    - role: rds_operation
+
+- name: Verify RDS inbound GTID replication
+  hosts: rds_controller
+  gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
+  vars:
+    rds_operation_node_role: controller
+    rds_operation_run_mode: verify-rds-inbound
+  roles:
+    - role: rds_operation

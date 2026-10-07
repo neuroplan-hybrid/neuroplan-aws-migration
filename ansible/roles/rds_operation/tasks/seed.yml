@@ -1,35 +1,20 @@
 ---
-- name: Require explicit approval and an existing compressed SQL dump
+- name: Require explicit mutation approval
   ansible.builtin.assert:
     that:
       - rds_operation_execute_mutations | bool
-      - rds_operation_seed_sql_gz | length > 0
-    fail_msg: "seed에는 승인 플래그와 rds_operation_seed_sql_gz가 필요합니다."
+    fail_msg: "seed에는 rds_operation_execute_mutations=true가 필요합니다."
 
-- name: Check approved seed dump exists on the controller
-  ansible.builtin.stat:
-    path: "{{ rds_operation_seed_sql_gz }}"
-  register: rds_operation_seed_file
-
-- name: Require a non-empty seed dump
-  ansible.builtin.assert:
-    that:
-      - rds_operation_seed_file.stat.exists
-      - rds_operation_seed_file.stat.size | int > 0
-    fail_msg: "초기 Import에 사용할 SQL gzip 파일이 없습니다."
+- name: Discover latest valid On-Prem backup and matching GTID
+  ansible.builtin.import_tasks: discover-seed-backup.yml
 
 - name: Load RDS Master credentials
   ansible.builtin.import_tasks: load-master-secret.yml
 
-- name: Import logical backup into RDS
+- name: Import selected logical backup into RDS
   ansible.builtin.shell: |
     set -o pipefail
-    gzip -dc "{{ rds_operation_seed_sql_gz }}" \
-      | mariadb --protocol=tcp \
-          --host="{{ rds_operation_endpoint }}" \
-          --port="{{ rds_operation_port }}" \
-          --user="{{ rds_operation_master_secret.username }}" \
-          --password="$RDS_MASTER_PASSWORD"
+    gzip -dc "{{ rds_operation_seed_sql_gz }}"       | mariadb --protocol=tcp           --host="{{ rds_operation_endpoint }}"           --port="{{ rds_operation_port }}"           --user="{{ rds_operation_master_secret.username }}"           --password="$RDS_MASTER_PASSWORD"
   args:
     executable: /bin/bash
   environment:
@@ -38,10 +23,7 @@
 
 - name: Verify imported database collation
   ansible.builtin.shell: |
-    mariadb --protocol=tcp --batch --skip-column-names \
-      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
-      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
-      --execute "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{{ rds_operation_database }}';"
+    mariadb --protocol=tcp --batch --skip-column-names       --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}"       --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD"       --execute "SELECT DEFAULT_COLLATION_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME='{{ rds_operation_database }}';"
   args:
     executable: /bin/bash
   environment:
