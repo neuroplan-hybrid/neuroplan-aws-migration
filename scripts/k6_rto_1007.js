@@ -15,7 +15,9 @@
 //   - 세션 누적: /api/auth/login은 호출마다 jwt_sessions에 새 행을 넣음 (Cookie Jar를 지워도 DB 세션은 남음)
 //     LOGIN_MODE=iter(기본): 매 반복 로그인 — 로그인까지 포함한 사용자 트랜잭션 전체를 매회 검증하려는 의도적 선택
 //       → 세션 수 ≈ 계정당 DURATION/(PAUSE+응답시간), 예: 20분·PAUSE 1초면 계정당 약 1,000건 → 테스트 후 테스트 계정 세션 정리(정현)
-//     LOGIN_MODE=session: 처음과 실패 직후에만 로그인(나머지는 Cookie 재사용) → 세션 수 = 1 + 장애 횟수 수준
+//     LOGIN_MODE=session: 처음·실패 직후·SESSION_RENEW(기본 10분)마다 로그인, 나머지는 Cookie 재사용
+//       → Access Token TTL 15분 전에 선제 재로그인 → 장애 없이 토큰 만료로 생기는 가짜 401을 막음 (#56 리뷰 3)
+//       → 20분 측정 시 로그인 2~3회 + 장애 횟수 수준. /api/auth/refresh는 요청 형식 미확인이라 재로그인으로 갱신
 //
 // 실행 위치: 측정용 PC (학원망 밖이 이상적), k6 v0.54+
 //   read -rsp 'TEST_PASSWORD: ' TEST_PASSWORD; echo
@@ -48,7 +50,17 @@ const PAUSE = Number(__ENV.PAUSE || '1');            // 반복 사이 대기(초
 const REQ_TIMEOUT = __ENV.REQ_TIMEOUT || '5s';       // 요청별 타임아웃 (장애 중 오래 매달리지 않게)
 const INSECURE = (__ENV.INSECURE || 'false') === 'true'; // 테스트 환경(자체 서명)에서만 true
 const LOGIN_MODE = __ENV.LOGIN_MODE || 'iter';       // iter | session (위 "세션 누적" 참고)
+const SESSION_RENEW_S = parseDuration(__ENV.SESSION_RENEW || '10m'); // session 모드 선제 재로그인 주기 (Access Token 15분보다 짧게)
 
+function parseDuration(v) {
+  const m = /^(\d+(?:\.\d+)?)(s|m)?$/.exec(String(v).trim());
+  if (!m) throw new Error(`SESSION_RENEW 형식 오류(예: 600s, 10m): ${v}`);
+  return Number(m[1]) * (m[2] === 'm' ? 60 : 1);
+}
+
+if (LOGIN_MODE === 'session' && SESSION_RENEW_S >= 15 * 60) {
+  throw new Error(`SESSION_RENEW(${SESSION_RENEW_S}s)는 Access Token TTL 15분보다 짧아야 함`);
+}
 if (LOGIN_MODE !== 'iter' && LOGIN_MODE !== 'session') {
   throw new Error(`LOGIN_MODE는 iter 또는 session: ${LOGIN_MODE}`);
 }
@@ -94,6 +106,7 @@ export const options = {
 let completedNext = true;
 let loggedIn = false;      // LOGIN_MODE=session에서만 사용
 let savedCookies = {};     // k6는 반복마다 VU Cookie Jar를 비움 → session 모드는 로그인 Cookie를 직접 보관·복원
+let loginAt = 0;           // 마지막 로그인 성공 시각(ms) → SESSION_RENEW 경과 시 선제 재로그인
 
 function record(step, res, ok) {
   stepOk.add(ok ? 1 : 0, { step, ip: (res && res.remote_ip) || 'none', code: String((res && res.status) || 0) });
@@ -122,6 +135,9 @@ export default function () {
 
   // ① 로그인 (iter: 매 반복 / session: 처음·실패 직후만)
   const jar = http.cookieJar();
+  if (LOGIN_MODE === 'session' && loggedIn && Date.now() - loginAt >= SESSION_RENEW_S * 1000) {
+    loggedIn = false;   // 토큰 만료 전 선제 재로그인
+  }
   if (LOGIN_MODE === 'session' && loggedIn) {
     for (const [k, v] of Object.entries(savedCookies)) jar.set(BASE_URL, k, v);
   }
@@ -136,6 +152,7 @@ export default function () {
     record('login', login, loginOk);
     loggedIn = loginOk;
     if (loginOk && LOGIN_MODE === 'session') {
+      loginAt = Date.now();
       savedCookies = {};
       for (const [k, arr] of Object.entries(login.cookies)) {
         if (arr.length > 0) savedCookies[k] = arr[0].value;
@@ -189,7 +206,7 @@ export function setup() {
   }
   const now = new Date();
   const kst = new Date(now.getTime() + 9 * 3600 * 1000).toISOString().replace('T', ' ').replace('Z', ' KST');
-  console.log(`[k6_rto] 시작 ${kst} (UTC ${now.toISOString()}) base=${BASE_URL} vus=${EMAILS.length} login=${LOGIN_MODE} dns_ttl=${options.dns.ttl}`);
+  console.log(`[k6_rto] 시작 ${kst} (UTC ${now.toISOString()}) base=${BASE_URL} vus=${EMAILS.length} login=${LOGIN_MODE}${LOGIN_MODE === 'session' ? `(renew ${SESSION_RENEW_S}s)` : ''} dns_ttl=${options.dns.ttl}`);
   console.log('[k6_rto] 이 PC와 장애 주입 PC의 시각 차이가 RTO 오차가 됨 — NTP 동기화 확인 후 진행');
 }
 
