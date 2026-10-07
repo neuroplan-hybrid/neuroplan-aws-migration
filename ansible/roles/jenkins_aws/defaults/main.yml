@@ -7,6 +7,11 @@ jenkins_aws_job_name: "neuroplan-aws-ci"
 jenkins_aws_pipeline_script_path: "Jenkinsfile.aws"
 jenkins_aws_poll_scm: "H/2 * * * *"
 
+# ECR Pull Secret 주기 갱신 전용 Job
+jenkins_ecr_refresh_job_name: "neuroplan-ecr-secret-refresh"
+jenkins_ecr_refresh_pipeline_script_path: "Jenkinsfile.ecr-secret-refresh"
+jenkins_ecr_refresh_schedule: "H */6 * * *"
+
 # Built-in Node에서 Pipeline을 실행하는 실제 OS 계정
 jenkins_aws_runtime_user: "jenkins"
 
@@ -40,3 +45,39 @@ gitops_repository_url: "git@github.com:neuroplan-hybrid/neuroplan-gitops.git"
 gitops_git_branch: "main"
 
 jenkins_gitops_credential_id: "neuroplan-gitops-ssh"
+
+# =========================================================
+# On-Prem Kubernetes / ECR Pull Secret
+# =========================================================
+
+# On-Prem DR Application Namespace
+jenkins_onprem_namespace: "application"
+
+# Jenkins가 갱신할 ECR ImagePullSecret
+jenkins_ecr_pull_secret_name: "ecr-pull-secret"
+
+# On-Prem DR에서 Pull할 AWS ECR Registry
+jenkins_ecr_registry: "707191185613.dkr.ecr.ap-northeast-2.amazonaws.com"
+
+# Jenkins 전용 Kubernetes ServiceAccount / RBAC
+jenkins_k8s_service_account_name: "jenkins-ecr-secret"
+jenkins_k8s_role_name: "jenkins-ecr-secret"
+jenkins_k8s_rolebinding_name: "jenkins-ecr-secret"
+
+# Jenkins ServiceAccount 인증용 Token Secret
+jenkins_k8s_token_secret_name: "jenkins-ecr-secret-token"
+
+# Jenkins OS 계정이 사용할 kubeconfig
+jenkins_kubeconfig_path: "/var/lib/jenkins/.kube/config"
+
+# Jenkins OS 계정에서 사용할 kubectl 절대경로
+jenkins_kubectl_path: "/usr/local/bin/kubectl"
+
+# On-Prem Kubernetes Cluster
+jenkins_onprem_cluster_name: "neuroplan-onprem"
+jenkins_onprem_context_name: "jenkins-ecr-secret@neuroplan-onprem"
+jenkins_onprem_api_server: "https://192.168.34.100:6443"
+
+# Ansible 실행 시 Kubernetes 리소스를 구성하기 위한
+# DevOps 계정의 관리자 kubeconfig
+jenkins_onprem_admin_kubeconfig: "/home/devops/.kube/config"
