@@ -7,7 +7,10 @@ rds_operation_identifier: "neuroplan-rds-operation"
 
 rds_operation_database: "infraready"
 rds_operation_database_collation: "utf8mb4_uca1400_ai_ci"
-rds_operation_seed_sql_gz: "/home/junghyun/infraready-latest.sql.gz"
+
+# 초기 동기화 시 db-primary에서 최신 정상 dump를 찾고 동일 파일의 GTID를 자동 추출한다.
+rds_operation_backup_directory: "/mnt/db-backup"
+rds_operation_seed_staging_directory: "/tmp/neuroplan-rds-operation"
 
 # RDS를 Source로 할 때 On-Prem이 접속하는 최소 권한 계정
 rds_operation_outbound_repl_username: "rds_to_onprem"
@@ -26,7 +29,6 @@ rds_operation_inbound_repl_password: ""  # Ansible Vault 또는 -e 전용
 rds_operation_inbound_repl_hosts:
   - "10.20.100.%"
   - "10.20.101.%"
-rds_operation_inbound_gtid_position: ""  # dump 시점과 일치하는 GTID만 입력
 
 rds_operation_socket: "/var/lib/mysql/mysql.sock"
 
@@ -37,4 +39,5 @@ rds_operation_allow_reset_replica: false
 rds_operation_cutover_approved: false
 rds_operation_dr_writes_fenced: false
 rds_operation_dr_promotion_approved: false
-rds_operation_dr_promoted_inventory_hostname: ""
+# T6 DR 승격 대상은 고정한다.
+rds_operation_dr_promoted_inventory_hostname: "db-primary"
