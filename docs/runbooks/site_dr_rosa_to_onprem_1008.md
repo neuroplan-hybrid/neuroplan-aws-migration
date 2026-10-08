@@ -1,4 +1,4 @@
-# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r1: #70 리뷰 반영)
+# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r2: #70 리뷰 반영)
 
 > 담당 **희재(네트워크·측정) + 정현(데이터)** · P0·핵심 · 시연 10/16 · 리전 ap-northeast-2 (Route 53은 글로벌)
 > 기준: #53(순서), #55(확정표), **#68(단계별 담당·주입 방식·RTO 기준 합의)**, 런북 형식은 T4(#67)
@@ -13,7 +13,7 @@
 | 흐름 | 데이터 전환(1~4, 정현) → 트래픽 전환(5~7, 희재) → 고정(8, 희재) |
 | 데이터 판정 (정현) | GTID 일치, 마지막 쓰기 DR 반영, 단일 Writer, 온프렘 쓰기 후 재조회 |
 | 트래픽 판정 (희재) | Control RTO·User RTO 측정·기록, 전환 후 k6 로그인·조회·저장 성공, 권한 DNS = onprem 유지 |
-| 중단 (#68) | ROSA 쓰기 차단 후 **5분 안에** GTID 불일치 / IO·SQL ≠ Yes / Lag ≠ 0 → **승격 안 함, 5번 주입 안 함**, RDS Writer 유지 |
+| 중단 (#68) | ROSA 쓰기 차단 후 **5분 안에** GTID 불일치 / IO·SQL ≠ Yes / Lag ≠ 0 → **승격 안 함, 5번 주입 안 함** → 5.1 **승격 전 원복** (`DEMO_WRITE_FENCE` 해제, ROSA + RDS Writer 운영 복귀). 승격 후에는 5.2 |
 
 ### 1.1 시각 기록 (#68 확정)
 
@@ -44,7 +44,7 @@ app.neuroplan.cloud  Weighted A(Alias) 2개
   ├ rosa   → ROSA Router NLB   weight 1  ← HC primary-health (/actuator/health/routing)
   └ onprem → DR NLB            weight 0  ← HC dr-health
 - weight > 0 레코드(rosa)가 모두 unhealthy → Route 53이 weight 0 레코드(onprem)로 응답 (active-passive)
-- HC: HTTPS 10초 간격, 3회 연속 실패 → Unhealthy (약 30초) → --inverted여도 같은 판정 주기를 거침
+- HC 설정: HTTPS 10초 간격, 3회 연속 실패 시 Unhealthy. `--inverted` 후 실제 걸리는 시간(T_inject → T_unhealthy / T_dns)은 단정하지 않고 **10/13~14 리허설에서 실측해 확정** (6장)
 ```
 - 주입을 `--inverted`로 하는 이유 (#68): `DEMO_READINESS_FAIL` 롤아웃은 `maxUnavailable: 0`에서 기존 Pod가 200을 계속 낼 수 있어 주입 실패 위험. inverted는 명령 1줄·시각이 정확·GitOps 무관
 - 발표 설명: 데이터 전환(1~4)은 계획된 수동 절차, 그 뒤 "ROSA 사이트 장애"를 HC 판정으로 주입해 DNS 기반 자동 전환을 측정
@@ -137,7 +137,7 @@ done
 | 4 | 온프렘 제한 쓰기: 온프렘 경로로 테스트 marker 저장·재조회 | 쓰기 성공 · 재조회 성공 · db-primary가 유일한 Writer · RDS 동시 쓰기 없음 | **T_promote** |
 
 - 희재 할 일: 1번 T0를 `~/t5_times.log`에 기록 (정현 공유 시각), probe·k6 동작 확인 / 4번 완료 공유를 받은 뒤에만 5번 진행
-- **중단 (#68)**: T0 후 5분 안에 GTID 불일치 / IO·SQL ≠ Yes / Lag ≠ 0 → 3번 승격·5번 주입 **진행 안 함**, RDS Writer 유지
+- **중단 (#68)**: T0 후 5분 안에 GTID 불일치 / IO·SQL ≠ Yes / Lag ≠ 0 → 3번 승격·5번 주입 **진행 안 함** → **5.1 승격 전 원복** (쓰기 차단이 걸려 있으므로 RDS Writer 유지만으로는 사용자 쓰기가 계속 막힘)
 - 1~4번 동안 k6 저장 실패는 쓰기 차단에 따른 예상된 실패 (User RTO는 T_inject 이후만 계산)
 
 ### 5. ROSA routing health 실패 주입 (희재) · T_inject
@@ -191,17 +191,45 @@ python3 scripts/k6_rto_summary_1007.py "$(ls -t k6_*.csv | head -1)" --t0 "2026-
 ```
 - 기록: 1.1의 시각 전부, Control·User RTO, 데이터 전환 시간·쓰기 차단 반영 지연(정현), Route 53 전파 시간(보조), HC 체커 로그 전환 구간
 
-## 5. 원복·정리
-- HC: 8번 apply로 `inverted=false` 원복됨. 8번을 못 하고 중단했으면 수동 원복
+## 5. 중단·원복 (단계별)
+
+> 어디서 멈췄는지에 따라 원복 방법이 다르다. **Writer 위치와 사용자 트래픽 방향이 어긋나지 않게** 하는 것이 기준.
+
+| 멈춘 시점 | Writer | Route 53 | 원복 | HC 단독 `--no-inverted` |
+|---|---|---|---|---|
+| 1~2번 (승격 전) | RDS | ROSA 1 / 온프렘 0, inverted 아님 | **5.1** | 해당 없음 (주입 전) |
+| 3~4번 이후 (승격 후, 5번 주입 전) | 온프렘 db-primary | ROSA 1 / 온프렘 0 | **5.2** | 해당 없음 |
+| 5~7번 (주입 후, 8번 전) | 온프렘 db-primary | ROSA 1 / 온프렘 0, **inverted** | **5.2** | **금지** |
+| 8번 완료 | 온프렘 db-primary | ROSA 0 / 온프렘 1 (apply로 inverted 원복) | 정상 종료 | 이미 원복됨 |
+
+### 5.1 승격 전 중단 → 기존 ROSA + RDS Writer 운영 복귀 (정현·예린, 희재 확인)
+1. `DEMO_WRITE_FENCE=false` (ROSA overlay ConfigMap, GitOps 커밋)
+2. Argo Sync 완료 · ROSA Backend 롤아웃 완료
+3. ROSA 쓰기 API **정상 성공** 확인 (테스트 쓰기 → 재조회)
+4. 기존 운영 상태 확인: RDS = Writer, RDS → 온프렘 복제 IO/SQL Yes, 권한 DNS = ROSA, k6 저장 성공 복귀 (희재)
+- 5번 주입을 하지 않았으므로 HC·Route 53은 손대지 않음
+
+### 5.2 승격 후 중단 → HC만 단독 원복 금지
+- db-primary가 Writer가 된 뒤 `HC_ROSA`만 `--no-inverted`로 되돌리면, 가중치가 ROSA 1 / 온프렘 0이라 **Route 53이 다시 ROSA를 응답** → 사용자 트래픽(ROSA)과 실제 Writer(온프렘)가 어긋남
+- 둘 중 하나로만 마무리:
+  - **(가) DR 유지**: 8번(ROSA 0 / 온프렘 1 고정 apply)을 끝까지 진행 → apply가 HC inverted도 함께 원복. 5번 주입 전에 멈췄다면 5번부터 이어서 진행해 DR로 확정
+  - **(나) Failback**: T6 절차로 RDS Writer를 다시 확정(재동기화 → 온프렘 쓰기 중지 → RDS Writer 전환 → ROSA 쓰기 차단 해제)한 **뒤에** HC를 원복
 ```bash
-source ~/t5_env.sh && aws route53 update-health-check --health-check-id "${HC_ROSA:?}" --no-inverted --query 'HealthCheck.HealthCheckConfig.Inverted' --output text   # 기대: False
+# (나)에서 RDS Writer 재확정이 끝난 뒤에만 실행 — Writer 확인 입력 가드
+source ~/t5_env.sh
+read -rp 'RDS Writer 재확정·ROSA 쓰기 차단 해제 완료 (yes 입력): ' ok
+if [[ "$ok" == yes ]]; then
+  aws route53 update-health-check --health-check-id "${HC_ROSA:?}" --no-inverted --query 'HealthCheck.HealthCheckConfig.Inverted' --output text   # 기대: False
+else
+  echo "⚠ 중단: Writer 재확정 전 HC 단독 원복 금지 (5.2)"
+fi
 ```
-- 이후 T6(Failback)은 런북 설명만 → 실제 원복은 10/16 destroy로 대체
+- 10/16 시연에서는 (가)가 기본. (나)는 T6 런북 설명 범위이고 실제 원복은 10/16 destroy로 대체
 
 ## 6. 리허설 (희재)
 - 10/13~14 Weighted 검증 단계에서 **5~6번만** 사전 확인 (`--inverted` → 권한 DNS 전환 → `--no-inverted` 원복)
   - 이관 단계 가중치(rosa 0 / onprem 100)에서는 방향이 반대이므로, 그때의 가중치에 맞춰 "weight > 0 쪽 HC를 inverted"로 확인
-  - 확인할 것: inverted 시 `get-health-check-status` 체커 상태 표시, 감지·전파 실측 시간
+  - 확인할 것: inverted 시 `get-health-check-status` 체커 상태 표시, **T_inject → T_unhealthy / T_dns 실측** (2장 설명 값 확정), 1초 polling 시 API throttling 여부 (있으면 간격 2~5초로 조정)
 
 ## 7. 발표 증적 (발표증적 5.5)
 - 1.1 시각표(T_sync~T_write_resume) + Control/User RTO, 데이터 전환 시간(별도), probe `site_auth` 전환 구간, k6 실패 구간 그래프, HC 체커 로그, GTID·마지막 쓰기 증적(정현), 8번 plan 요약
