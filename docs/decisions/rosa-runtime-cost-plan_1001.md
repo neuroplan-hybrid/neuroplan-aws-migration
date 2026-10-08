@@ -556,3 +556,29 @@ Cost Explorer는 최대 하루 늦게 반영될 수 있으므로 화면 값에 �
 14. 비용 기준은 10/12 Apply 전 `$230 이하`, 10/15 저녁 `$430 이하`, `$480` Hard Stop으로 관리한다.
 15. Route 53 운영 정책은 **Weighted 기반 active-passive**로 통일하며 Failover Routing Policy로 전환하지 않는다.
 16. 최종 발표에서는 `비용 절감을 위해 사전 OpenShift 환경에서 애플리케이션 호환성을 검증하고, AWS 종속 검증 시점에만 ROSA HCP를 프로비저닝했다`고 정리한다.
+
+## 10/8 갱신 (#33·#53·#55·#63)
+
+> 위 본문은 10/1 결정 당시 기준으로 남겨 둔다. 아래 항목은 이후 확정된 내용이며, 본문과 다르면 아래를 따른다.
+
+| 본문 위치 | 10/1 기준 | 10/8 확정 | 근거 |
+|---|---|---|---|
+| 7장 완료 기준 | `/health/live`, `/health/ready` | Liveness `/actuator/health/liveness`, Readiness `/actuator/health/readiness`, Route 53 HC `/actuator/health/routing` (DB 제외) | #34, #53 |
+| 6장·9.2·10장 8번 | "T6 RDS Failover 시연 승인 시 Multi-AZ" | **Multi-AZ 시연 없음. 운영 RDS는 Single-AZ 유지**. 데이터 보호 시연은 **T3 PITR**(별도 인스턴스 복원) | #55, #63 |
+| 6장 "T6 승인 시 RDS Multi-AZ Failover 검증" | 검증 항목 | 삭제 (위와 같음) | #55 |
+| 9장 10/16 | Worker/배포/VPN/DR 장애 테스트 | **Worker/Pod → Deployment Safety → PITR → VPN → ROSA→On-Prem DR 검증, Failback 절차 설명** | #33, #55 |
+| 비용 | 워커 타입 미확정 추정 | **m5.xlarge × 3** 기준 추정 + Cost Explorer 실측 (상한·단계 기준 $230 / $430 / $480 유지) | #33 |
+| 이미지 Pull | ECR 인증 방식 확인 | ECR 단일(Harbor 미러 없음). 온프렘 DR은 VM 부팅 후 On-Prem Sync/재배포 전에 `ecr-pull-secret` 갱신 Job(A) 필수 + `imagePullPolicy: IfNotPresent`(B, gitops #6). ROSA는 Worker IAM 기반 ECR Pull이므로 A와 ROSA Apply는 직접 연결하지 않음 | #33, #53 |
+
+### 10/16 장애 시연 번호 (확정)
+| # | 시나리오 | 우선 | 담당 |
+|---|---|---|---|
+| T1 | Application HA: Worker drain | P0 | 예린 |
+| T2 | Deployment Safety: 잘못된 배포 차단·복구 | P0 | 예린 |
+| T3 | Data Protection: RDS PITR | P1 | 정현 |
+| T4 | Network HA: VPN 단일 터널 장애 | P0 | 희재 |
+| T5 | ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 | P0·핵심 | 희재 + 정현 |
+| T6 | 수동 Failback 절차 설명 (런북, 실제 시연 제외) | — | 정현 + 희재 |
+| T7 | DR 운영 중 온프레미스 LB 전환 (keepalived) | P2·부록 | 희재 |
+
+- 이 문서와 `mentoring-feedback_0930.md`의 이전 "T6"은 의미가 다르다: 이 문서의 T6 = RDS Multi-AZ Failover(삭제), 0930 문서의 T6 = ROSA → 온프렘 DR(**현재 T5**)
