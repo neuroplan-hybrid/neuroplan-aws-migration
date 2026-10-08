@@ -5,7 +5,7 @@
       - rds_operation_execute_mutations | bool
       - rds_operation_outbound_repl_password | length >= 32
       - rds_operation_outbound_repl_password is match('^[A-Za-z0-9]+$')
-    fail_msg: "configure-onprem-replica에는 승인 플래그와 Vault 제공 복제 비밀번호가 필요합니다."
+    fail_msg: "configure-onprem-replica에는 승인 플래그와 Ansible Vault 또는 실행 시 전달한 복제 비밀번호가 필요합니다."
   no_log: true
 
 - name: Build exact expected RDS replica source patterns
