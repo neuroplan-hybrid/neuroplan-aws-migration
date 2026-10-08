@@ -97,7 +97,7 @@ curl -s -o /dev/null -w 'app /api/learning/state %{http_code}\n' --max-time 10 \
 ```bash
 # 실행 위치: Infra VM (root) — 위 표로 판정한 범위를 입력 (A 또는 B)
 read -rp 'T7 범위 (A/B): ' T7_SCOPE
-case "$T7_SCOPE" in A|B) echo "$T7_SCOPE" > ~/t7_scope && echo "범위=$(cat ~/t7_scope) 기록" ;; *) echo "⚠ A 또는 B만 입력 → 다시 실행" ;; esac
+case "$T7_SCOPE" in A|B) echo "$T7_SCOPE" > ~/t7_scope && echo "범위=$(cat ~/t7_scope) 기록" ;; *) rm -f ~/t7_scope; echo "⚠ A 또는 B만 입력 → 기존 기록 삭제, 다시 실행" ;; esac
 ```
 - 4.1·4.6은 공통으로 아래 줄로 대상 호스트를 정한다 (파일이 없거나 값이 A·B가 아니면 `HOSTS`가 비어 다음 단계에서 멈춤)
 ```bash

@@ -1,4 +1,4 @@
-# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r3: AWS CLI는 Infra VM root = IAM user heejae)
+# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r3: AWS CLI는 Infra VM root = IAM user heejae / r4 1009: Fence 실제 차단 범위·이미지 확인)
 
 > 담당 **희재(네트워크·측정) + 정현(데이터)** · P0·핵심 · 시연 10/16 · 리전 ap-northeast-2 (Route 53은 글로벌)
 > 기준: #53(순서), #55(확정표), **#68(단계별 담당·주입 방식·RTO 기준 합의)**, 런북 형식은 T4(#67)
@@ -35,6 +35,7 @@
 | 쓰기 차단 반영 지연 | T_sync → T0 | 보조 (Sync·롤아웃 시간) |
 | **Control RTO** | T_inject → T_dns | 주 지표 |
 | **User RTO** | T_inject → T_user | 주 지표 |
+| 사용자 영향 구간 | T0 → T_user | 보조 (Fence로 로그인·쓰기 실패는 T0부터 시작 → 발표 시 User RTO와 함께 표기, #81) |
 | Route 53 전파 시간 | T_unhealthy → T_dns | 보조 |
 
 ## 2. 왜 전환되는가 (발표 설명용)
@@ -53,7 +54,7 @@ app.neuroplan.cloud  Weighted A(Alias) 2개
 
 | # | 확인 | 담당 | 기대 |
 |---|---|---|---|
-| ① | `DEMO_WRITE_FENCE` 앱·GitOps PR Merge (10/12 전) | 정현·예린 | ROSA overlay에 플래그(기본 false), 상태 변경 API만 503·조회·routing health 유지 |
+| ① | `DEMO_WRITE_FENCE` 앱·GitOps PR Merge (10/12 전) | 정현·예린 | app #6 Merged `977450a`, gitops #10 ROSA overlay 기본 `false` / **ROSA Backend 이미지가 app #6 이후 빌드인지 확인** (10/9 기준 GitOps 태그 `b7deb4a`는 Fence 미포함 → 새 이미지·태그 변경 PR 필요, #81) |
 | ② | 8번용 tfvars PR 리뷰·승인 완료 (Merge 전 대기) | 희재 | `operation.tfvars` `rosa_weight = 0`, `onprem_weight = 1` |
 | ③ | Route 53 HC 2개 Healthy, 권한 DNS = rosa | 희재 | 아래 3.1 |
 | ④ | 복제 정상 (IO/SQL Yes, Lag 0) | 정현 | |
@@ -138,7 +139,7 @@ K6_CSV_TIME_FORMAT=rfc3339_nano k6 run \
 unset TEST_PASSWORD
 ```
 - `DNS_TTL=5s`: k6 내부 DNS 캐시가 전환을 늦추지 않게 (기본 60s)
-- 1~4번 동안(쓰기 차단 중) k6 저장 실패는 **예상된 실패** → User RTO는 T_inject 이후만 계산
+- 1~4번 동안(쓰기 차단 중) k6는 iter 모드라 **매 반복 로그인부터 503** → 예상된 실패. User RTO는 T_inject 이후만 계산하고, T0부터의 실패는 "사용자 영향 구간"(1.1)으로 따로 기록
 
 ```bash
 # Infra VM (root) — HC 체커별 상태·CheckedTime 1초 기록 (별도 창, T_unhealthy 보조 지표·증적)
@@ -161,14 +162,15 @@ done
 
 | # | 단계 | 판정 (모두 충족) | 증적 |
 |---|---|---|---|
-| 1 | ROSA Backend 쓰기 차단: `DEMO_WRITE_FENCE=true` (앱·GitOps PR, 10/12 전 Merge, 기본값 false) → Sync → 롤아웃 | 상태 변경 API **503** · 조회 API 정상 · `/actuator/health/routing` **200** · `/actuator/health/readiness` 의도대로 정상 · ROSA Backend Pod 전체 롤아웃 완료 | T_sync, T_rollout, **T0** |
+| 1 | ROSA Backend 쓰기 차단: `DEMO_WRITE_FENCE=true` (gitops ROSA overlay ConfigMap, 기본값 false) → Sync → **Backend 롤아웃** (ConfigMap은 `envFrom`이라 값만 바꿔서는 기존 Pod에 반영 안 됨) | `/api/**` POST·PUT·PATCH·DELETE **503** (로그인·refresh·logout·reauth 포함) · `GET /api/ai/quota`·`/api/ai/preferences` **503**(내부 upsert) · 순수 조회(`GET /api/learning/state` 등) 정상 · `/actuator/health/routing` **200** · `/actuator/health/readiness` 정상 · 문제은행 스케줄러 skip 로그 · ROSA Backend Pod 전체 롤아웃 완료 (app #6 구현 기준) | T_sync, T_rollout, **T0** |
 | 2 | 복제 catch-up (RDS → 온프렘) | GTID 일치 · `Slave_IO_Running: Yes` · `Slave_SQL_Running: Yes` · `Seconds_Behind_Master: 0` · 마지막 테스트 쓰기 행이 온프렘에 존재 | 상태 출력 |
 | 3 | db-primary 승격: `rds-dr-promote.yml` 승인 플래그와 함께 실행, **db-primary만** | `hostname=db-primary` · `read_only=0` · 승격 후 GTID · 복제 중지 상태 · 제한 테스트 쓰기 성공 · 재조회 성공 | 출력 저장 (메시지만으로 판단하지 않음) |
 | 4 | 온프렘 제한 쓰기: 온프렘 경로로 테스트 marker 저장·재조회 | 쓰기 성공 · 재조회 성공 · db-primary가 유일한 Writer · RDS 동시 쓰기 없음 | **T_promote** |
 
 - 희재 할 일: 1번 T0를 `~/t5_times.log`에 기록 (정현 공유 시각), probe·k6 동작 확인 / 4번 완료 공유를 받은 뒤에만 5번 진행
 - **중단 (#68)**: T0 후 5분 안에 GTID 불일치 / IO·SQL ≠ Yes / Lag ≠ 0 → 3번 승격·5번 주입 **진행 안 함** → **5.1 승격 전 원복** (쓰기 차단이 걸려 있으므로 RDS Writer 유지만으로는 사용자 쓰기가 계속 막힘)
-- 1~4번 동안 k6 저장 실패는 쓰기 차단에 따른 예상된 실패 (User RTO는 T_inject 이후만 계산)
+- 1~4번 동안 k6 실패(로그인 503부터)는 쓰기 차단에 따른 예상된 실패 (User RTO는 T_inject 이후만 계산, 사용자 영향 구간은 T0부터)
+- 1번 확인 시 "로그인 정상"을 기대하지 않음 — Fence 구현이 로그인도 막음 (#74·app #6). 로그인 503은 정상 동작
 
 ### 5. ROSA routing health 실패 주입 (희재) · T_inject
 ```bash
