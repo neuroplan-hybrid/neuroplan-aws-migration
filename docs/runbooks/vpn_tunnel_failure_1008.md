@@ -35,7 +35,7 @@ cd ~ && bash check_vpn_state_0930.sh --aws vpn-0cba1687403805b8a; echo "exit=$?"
 timedatectl | grep -i synchronized
 ```
 - 기대: `FAIL 0건`, `exit=0` (ESP 2, 라우트 vti1 100·vti2 200, rp_filter 2·2, 텔레메트리 UP 2), `System clock synchronized: yes`
-- VPN ID는 10/12 plan에서 VPN replace 0이면 그대로. 바뀌었으면 `terraform output vpn_connection_id`로 교체
+- VPN ID는 10/12 plan에서 VPN replace 0이면 그대로. 바뀌었으면 Infra VM에서 `aws ec2 describe-vpn-connections --region ap-northeast-2 --filters Name=state,Values=available --query 'VpnConnections[].VpnConnectionId' --output text`로 확인
 - **정현 복제 상태 확인 후 T4 시작** (`Slave_IO_Running=Yes`, `Slave_SQL_Running=Yes`, Lag 0)
 - 측정 PC 2곳 시각 비교: `date '+%F %T.%N %z'`
 
@@ -45,11 +45,31 @@ timedatectl | grep -i synchronized
 ```bash
 # DevOps VM (heejae) — DR 진입 경로 1초 측정
 cd ~/neuroplan-aws-migration && pwd \
-&& export DR_NLB_DNS="$(cd envs/prod && terraform output -raw dr_nlb_dns_name 2>/dev/null)" \
-&& echo "DR_NLB_DNS=${DR_NLB_DNS:?terraform output 실패 → 중단}" \
+&& scp -o ConnectTimeout=10 root@192.168.14.62:~/dr_nlb_dns.txt ~/ \
+&& export DR_NLB_DNS="$(cat ~/dr_nlb_dns.txt)" \
+&& echo "DR_NLB_DNS=${DR_NLB_DNS:?조회 실패 → 중단}" \
 && bash scripts/probe_1006.sh run 600
 ```
-- `DR_NLB_DNS`는 고정값 대신 **최신 Terraform Output** 사용 (NLB 교체 시 옛 DNS 측정 방지, `probe_1006.sh` 주석 기준). `terraform output`이 안 되는 계정이면 당일 예린에게 받은 값으로 `export`
+- `DR_NLB_DNS`는 고정값 대신 **AWS에서 현재 값을 조회** (NLB 교체 시 옛 DNS 측정 방지). DevOps VM `heejae`는 AWS 자격 증명·Terraform backend가 없어(10/8 예린 확인) Infra VM에서 먼저 조회:
+```bash
+# Infra VM (root) — DR NLB DNS 조회, 실패·빈 값·None이면 파일을 만들지 않음
+v="$(aws elbv2 describe-load-balancers --region ap-northeast-2 --names neuroplan-dr-nlb --query 'LoadBalancers[0].DNSName' --output text 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$v" == *.elb.ap-northeast-2.amazonaws.com ]]; then
+  printf '%s\n' "$v" > ~/dr_nlb_dns.txt && cat ~/dr_nlb_dns.txt
+else
+  rm -f ~/dr_nlb_dns.txt; echo "⚠ DR NLB DNS 조회 실패 (rc=$rc): $v → 파일 생성 안 함, 중단"
+fi
+```
+- **AWS CLI 실행 주체**: Infra VM 리눅스 `root` 계정의 기본 프로필(`/root/.aws`, 600) = **IAM 사용자 `heejae`** (`AWS_PROFILE` 지정 없음). 10/8 `sts get-caller-identity` → `user/heejae`, `simulate-principal-policy`로 아래 권한 allowed 확인
+  - `route53:ListHealthChecks`·`GetHealthCheck`·`GetHealthCheckStatus`·`UpdateHealthCheck`·`ListHostedZonesByName`·`ListResourceRecordSets`, `elasticloadbalancing:DescribeLoadBalancers`
+- **값 전달 경로**: DevOps VM `heejae` → `root@192.168.14.62` SSH/scp (Mgmt 대역, 비밀번호 인증, 10/7부터 스크립트 복사에 사용 — 실행시트 0.1)
+- 당일 사전 확인:
+```bash
+# Infra VM (root)
+whoami; aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/<ACCT>/'   # 기대: root / ...:user/heejae
+# DevOps VM (heejae)
+ssh -o ConnectTimeout=5 root@192.168.14.62 'whoami; hostname -s'                               # 기대: root / infra
+```
 - `dr` 열 = DR NLB → VPN → 온프렘 `dr-health` (VPN을 반드시 지나는 경로)
 - 10/16에는 ROSA LB DNS도 넣어 `ROSA_LB_DNS=… ` 함께 기록 (ROSA 쪽은 VPN과 무관 → 대조군)
 
@@ -109,7 +129,7 @@ fi
 | 복제 | 정현 (db-primary) | `SHOW SLAVE STATUS\G` IO/SQL Yes, Lag / RDS에 테스트 행 1건 쓰기 → 온프렘 재조회 |
 
 ```bash
-# AWS CLI (DevOps VM 또는 Infra VM), ap-northeast-2
+# AWS CLI — Infra VM (root), ap-northeast-2 (DevOps VM heejae는 AWS 자격 증명 없음)
 aws ec2 describe-vpn-connections --region ap-northeast-2 --vpn-connection-ids vpn-0cba1687403805b8a \
   --query 'VpnConnections[0].VgwTelemetry[].[OutsideIpAddress,Status,LastStatusChange]' --output table
 TG=$(aws elbv2 describe-target-groups --region ap-northeast-2 --names neuroplan-dr-tg --query 'TargetGroups[0].TargetGroupArn' --output text)

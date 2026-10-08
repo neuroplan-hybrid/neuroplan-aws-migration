@@ -62,9 +62,20 @@ ip neigh show 192.168.24.100 dev ens161
 ```bash
 # DevOps VM (heejae) — DR 진입 경로 1초 측정 (T5에서 이어서 돌고 있으면 생략)
 cd ~/neuroplan-aws-migration && pwd \
-&& export DR_NLB_DNS="$(cd envs/prod && terraform output -raw dr_nlb_dns_name 2>/dev/null)" \
-&& echo "DR_NLB_DNS=${DR_NLB_DNS:?terraform output 실패 → 중단}" \
+&& scp -o ConnectTimeout=10 root@192.168.14.62:~/dr_nlb_dns.txt ~/ \
+&& export DR_NLB_DNS="$(cat ~/dr_nlb_dns.txt)" \
+&& echo "DR_NLB_DNS=${DR_NLB_DNS:?조회 실패 → 중단}" \
 && bash scripts/probe_1006.sh run 300
+```
+- `dr_nlb_dns.txt`는 위 probe 실행 전에 Infra VM(root)에서 먼저 조회 (DevOps VM heejae는 AWS 자격 증명 없음, 실행 주체·권한 근거는 T4 런북 4.1과 같음)
+```bash
+# Infra VM (root) — DR NLB DNS 조회, 실패·빈 값·None이면 파일을 만들지 않음
+v="$(aws elbv2 describe-load-balancers --region ap-northeast-2 --names neuroplan-dr-nlb --query 'LoadBalancers[0].DNSName' --output text 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$v" == *.elb.ap-northeast-2.amazonaws.com ]]; then
+  printf '%s\n' "$v" > ~/dr_nlb_dns.txt && cat ~/dr_nlb_dns.txt
+else
+  rm -f ~/dr_nlb_dns.txt; echo "⚠ DR NLB DNS 조회 실패 (rc=$rc): $v → 파일 생성 안 함, 중단"
+fi
 ```
 - k6: T7 전용으로 새로 실행 (P2 부록이라 T5 측정이 살아 있다는 보장 없음). 연속성 검증 = `LOGIN_MODE=session` (#56)
 ```bash

@@ -1,4 +1,4 @@
-# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r2: #70 리뷰 반영)
+# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r3: AWS CLI는 Infra VM root = IAM user heejae)
 
 > 담당 **희재(네트워크·측정) + 정현(데이터)** · P0·핵심 · 시연 10/16 · 리전 ap-northeast-2 (Route 53은 글로벌)
 > 기준: #53(순서), #55(확정표), **#68(단계별 담당·주입 방식·RTO 기준 합의)**, 런북 형식은 T4(#67)
@@ -60,24 +60,54 @@ app.neuroplan.cloud  Weighted A(Alias) 2개
 | ⑤ | VPN ESP 2, DR 경로 200 | 희재 | `check_vpn_state_0930.sh --aws` FAIL 0, probe `dr` 200 |
 | ⑥ | 측정 PC·DevOps VM·Infra VM 시각 동기화 | 전원 | `date '+%F %T.%N %z'` 비교 |
 
-### 3.1 HC·DNS 사전 확인
+### 3.1 측정 값 조회·HC·DNS 사전 확인
+
+> **AWS CLI 명령은 모두 Infra VM(root)에서 실행.** DevOps VM `heejae` 계정은 AWS 자격 증명·Terraform backend가 없음 (10/8 예린 확인)
+
+- **AWS CLI 실행 주체**: Infra VM 리눅스 `root` 계정의 기본 프로필(`/root/.aws`, 600) = **IAM 사용자 `heejae`** (`AWS_PROFILE` 지정 없음). 10/8 `sts get-caller-identity` → `user/heejae`, `simulate-principal-policy`로 아래 권한 allowed 확인
+  - `route53:ListHealthChecks`·`GetHealthCheck`·`GetHealthCheckStatus`·`UpdateHealthCheck`·`ListHostedZonesByName`·`ListResourceRecordSets`, `elasticloadbalancing:DescribeLoadBalancers`
+- **값 전달 경로**: DevOps VM `heejae` → `root@192.168.14.62` SSH/scp (Mgmt 대역, 비밀번호 인증, 10/7부터 스크립트 복사에 사용 — 실행시트 0.1)
+- 당일 사전 확인:
 ```bash
-# DevOps VM (heejae), AWS CLI — Route 53은 글로벌
-# ① 측정용 값을 환경 파일로 저장 (이후 모든 터미널에서 source ~/t5_env.sh)
-cd ~/neuroplan-aws-migration/envs/prod && pwd \
-&& HC_ROSA="$(terraform output -json route53_health_check_ids | jq -r .primary)" \
-&& HC_DR="$(terraform output -json route53_health_check_ids | jq -r .dr)" \
-&& DR_NLB_DNS="$(terraform output -raw dr_nlb_dns_name)" \
-&& ROSA_LB_DNS="$(sed -nE 's/^primary_lb_dns_name *= *"([^"]+)".*/\1/p' operation.tfvars)" \
-&& printf 'export HC_ROSA=%q\nexport HC_DR=%q\nexport DR_NLB_DNS=%q\nexport ROSA_LB_DNS=%q\n' \
-     "${HC_ROSA:?없음}" "${HC_DR:?없음}" "${DR_NLB_DNS:?없음}" "${ROSA_LB_DNS:?없음}" > ~/t5_env.sh \
-&& chmod 600 ~/t5_env.sh && cat ~/t5_env.sh
+# Infra VM (root)
+whoami; aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/<ACCT>/'   # 기대: root / ...:user/heejae
+# DevOps VM (heejae)
+ssh -o ConnectTimeout=5 root@192.168.14.62 'whoami; hostname -s'                               # 기대: root / infra
 ```
-- `HC_ROSA`·`HC_DR`·`DR_NLB_DNS`·`ROSA_LB_DNS` 4개가 모두 값이 있어야 파일 생성 (하나라도 비면 중단). `ROSA_LB_DNS`는 10/13 tfvars PR로 `operation.tfvars`에 들어간 `primary_lb_dns_name` 값
-- 이후 4장 명령은 **터미널마다 `source ~/t5_env.sh`로 시작** (새 터미널에서 변수가 비는 문제 방지)
 
 ```bash
-# ② HC·DNS 상태 확인
+# Infra VM (root) — ① AWS에서 직접 조회 → ~/t5_env.sh (Terraform output 불필요)
+ZID="$(aws route53 list-hosted-zones-by-name --dns-name neuroplan.cloud --max-items 1 \
+  --query "HostedZones[?Name=='neuroplan.cloud.'].Id | [0]" --output text 2>/dev/null | sed 's#/hostedzone/##')"
+if [[ ! "$ZID" =~ ^Z[A-Z0-9]+$ ]]; then echo "⚠ Hosted Zone ID 조회 실패: '$ZID' → 중단"; ZID=""; fi
+HC_ROSA="$(aws route53 list-health-checks --query "HealthChecks[?HealthCheckConfig.FullyQualifiedDomainName=='primary-health.neuroplan.cloud'].Id | [0]" --output text)"
+HC_DR="$(aws route53 list-health-checks --query "HealthChecks[?HealthCheckConfig.FullyQualifiedDomainName=='dr-health.neuroplan.cloud'].Id | [0]" --output text)"
+DR_NLB_DNS="$(aws elbv2 describe-load-balancers --region ap-northeast-2 --names neuroplan-dr-nlb --query 'LoadBalancers[0].DNSName' --output text)"
+ROSA_LB_DNS="$(aws route53 list-resource-record-sets --hosted-zone-id "$ZID" \
+  --query "ResourceRecordSets[?Name=='app.neuroplan.cloud.' && SetIdentifier=='rosa'].AliasTarget.DNSName | [0]" --output text | sed 's/\.$//')"
+ok=1; for v in ZID HC_ROSA HC_DR DR_NLB_DNS ROSA_LB_DNS; do
+  [[ -n "${!v}" && "${!v}" != None ]] || { echo "⚠ $v 없음 → 중단"; ok=0; }
+done
+[[ "$HC_ROSA" =~ ^[0-9a-f-]{36}$ && "$HC_DR" =~ ^[0-9a-f-]{36}$ ]] || { echo "⚠ HC ID 형식 이상 → 중단"; ok=0; }
+[[ "$DR_NLB_DNS" == *.elb.ap-northeast-2.amazonaws.com ]] || { echo "⚠ DR NLB DNS 형식 이상 → 중단"; ok=0; }
+if (( ok )); then
+  umask 077
+  printf 'export HC_ROSA=%q\nexport HC_DR=%q\nexport DR_NLB_DNS=%q\nexport ROSA_LB_DNS=%q\n' \
+    "$HC_ROSA" "$HC_DR" "$DR_NLB_DNS" "$ROSA_LB_DNS" > ~/t5_env.sh.tmp && mv ~/t5_env.sh.tmp ~/t5_env.sh && cat ~/t5_env.sh
+else
+  rm -f ~/t5_env.sh ~/t5_env.sh.tmp; echo "⚠ t5_env.sh 생성 안 함 (이전 값도 삭제)"
+fi
+```
+- 4개가 모두 값이 있어야 파일 생성. HC ID는 HC 대상 FQDN(`primary-health`·`dr-health`)으로, ROSA LB DNS는 `app` Weighted 레코드(`rosa`)의 Alias 대상으로 찾음 → 10/13 Route 53 `weighted` 적용 후에만 값이 나옴
+
+```bash
+# DevOps VM (heejae) — ② 같은 값 받아오기 (probe용, AWS 호출 없음)
+scp -o ConnectTimeout=10 root@192.168.14.62:~/t5_env.sh ~/ && chmod 600 ~/t5_env.sh && cat ~/t5_env.sh
+```
+- 이후 4장 명령은 **터미널마다 `source ~/t5_env.sh`로 시작** (새 터미널에서 변수가 비는 문제 방지). AWS 명령은 Infra VM, probe는 DevOps VM
+
+```bash
+# Infra VM (root) — ③ HC·DNS 상태 확인
 source ~/t5_env.sh \
 && for h in "${HC_ROSA:?}" "${HC_DR:?}"; do
      aws route53 get-health-check --health-check-id "$h" --query 'HealthCheck.HealthCheckConfig.[FullyQualifiedDomainName,ResourcePath,Inverted]' --output text
@@ -111,7 +141,7 @@ unset TEST_PASSWORD
 - 1~4번 동안(쓰기 차단 중) k6 저장 실패는 **예상된 실패** → User RTO는 T_inject 이후만 계산
 
 ```bash
-# DevOps VM (heejae) — HC 체커별 상태·CheckedTime 1초 기록 (별도 창, T_unhealthy 보조 지표·증적)
+# Infra VM (root) — HC 체커별 상태·CheckedTime 1초 기록 (별도 창, T_unhealthy 보조 지표·증적)
 source ~/t5_env.sh && : "${HC_ROSA:?}"
 LOG=~/t5_hc_$(date +%m%d-%H%M).tsv
 printf 'local_time\tregion\tchecked_time\tstatus\n' > "$LOG"
@@ -131,7 +161,7 @@ done
 
 | # | 단계 | 판정 (모두 충족) | 증적 |
 |---|---|---|---|
-| 1 | ROSA Backend 쓰기 차단: `DEMO_WRITE_FENCE=true` (앱·GitOps PR, 10/12 전 Merge) → Sync → 롤아웃 | 상태 변경 API **503** · 조회 API 정상 · `/actuator/health/routing` **200** · ROSA Backend Pod 전체 롤아웃 완료 | T_sync, T_rollout, **T0** |
+| 1 | ROSA Backend 쓰기 차단: `DEMO_WRITE_FENCE=true` (앱·GitOps PR, 10/12 전 Merge, 기본값 false) → Sync → 롤아웃 | 상태 변경 API **503** · 조회 API 정상 · `/actuator/health/routing` **200** · `/actuator/health/readiness` 의도대로 정상 · ROSA Backend Pod 전체 롤아웃 완료 | T_sync, T_rollout, **T0** |
 | 2 | 복제 catch-up (RDS → 온프렘) | GTID 일치 · `Slave_IO_Running: Yes` · `Slave_SQL_Running: Yes` · `Seconds_Behind_Master: 0` · 마지막 테스트 쓰기 행이 온프렘에 존재 | 상태 출력 |
 | 3 | db-primary 승격: `rds-dr-promote.yml` 승인 플래그와 함께 실행, **db-primary만** | `hostname=db-primary` · `read_only=0` · 승격 후 GTID · 복제 중지 상태 · 제한 테스트 쓰기 성공 · 재조회 성공 | 출력 저장 (메시지만으로 판단하지 않음) |
 | 4 | 온프렘 제한 쓰기: 온프렘 경로로 테스트 marker 저장·재조회 | 쓰기 성공 · 재조회 성공 · db-primary가 유일한 Writer · RDS 동시 쓰기 없음 | **T_promote** |
@@ -142,7 +172,7 @@ done
 
 ### 5. ROSA routing health 실패 주입 (희재) · T_inject
 ```bash
-# DevOps VM (heejae) — 4번 완료(정현 "승격 완료" 공유) 후에만
+# Infra VM (root) — 4번 완료(정현 "승격 완료" 공유) 후에만
 source ~/t5_env.sh
 read -rp '정현 4번 완료 확인 (yes 입력): ' ok
 if [[ "$ok" == yes && -n "${HC_ROSA:-}" ]]; then
@@ -215,7 +245,7 @@ python3 scripts/k6_rto_summary_1007.py "$(ls -t k6_*.csv | head -1)" --t0 "2026-
   - **(가) DR 유지**: 8번(ROSA 0 / 온프렘 1 고정 apply)을 끝까지 진행 → apply가 HC inverted도 함께 원복. 5번 주입 전에 멈췄다면 5번부터 이어서 진행해 DR로 확정
   - **(나) Failback**: T6 절차로 RDS Writer를 다시 확정(재동기화 → 온프렘 쓰기 중지 → RDS Writer 전환 → ROSA 쓰기 차단 해제)한 **뒤에** HC를 원복
 ```bash
-# (나)에서 RDS Writer 재확정이 끝난 뒤에만 실행 — Writer 확인 입력 가드
+# Infra VM (root) — (나)에서 RDS Writer 재확정이 끝난 뒤에만 실행, Writer 확인 입력 가드
 source ~/t5_env.sh
 read -rp 'RDS Writer 재확정·ROSA 쓰기 차단 해제 완료 (yes 입력): ' ok
 if [[ "$ok" == yes ]]; then
