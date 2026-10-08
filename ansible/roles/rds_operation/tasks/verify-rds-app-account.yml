@@ -49,7 +49,7 @@
     chmod 600 "$workdir/master.cnf" "$workdir/app.cnf"
 
     {% for host in rds_operation_app_hosts %}
-    grant_quote='\`'
+    grant_quote="$(printf '\\140')"
     account_display="${grant_quote}{{ rds_operation_app_username }}${grant_quote}@${grant_quote}{{ host }}${grant_quote}"
     expected_usage="GRANT USAGE ON *.* TO $account_display"
     expected_crud="GRANT SELECT, INSERT, UPDATE, DELETE ON ${grant_quote}{{ rds_operation_database }}${grant_quote}.* TO $account_display"
