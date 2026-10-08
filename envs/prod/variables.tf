@@ -286,9 +286,9 @@ variable "rds_apply_immediately" {
 }
 
 # RDS CloudWatch Alarm / SNS Email
-# 이메일 주소는 일반 tfvars가 아닌 로컬 secret tfvars 또는 TF_VAR_로 전달한다.
+# 이메일 구독은 Terraform으로 만들지 않으며, Apply 후 SNS Topic ARN으로 CLI 또는 콘솔에서 별도 등록·승인한다.
 variable "enable_rds_cloudwatch_alarms" {
-  description = "RDS CloudWatch Alarm과 SNS 이메일 구독을 생성할지 여부"
+  description = "RDS CloudWatch Alarm·SNS Topic을 생성할지 여부"
   type        = bool
   default     = false
 }

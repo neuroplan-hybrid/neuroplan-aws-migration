@@ -5,11 +5,11 @@
 # Apply 후 Topic ARN으로 CLI 또는 콘솔에서 별도 등록한다.
 
 data "aws_caller_identity" "current" {
-  count = var.enable_cloudwatch_alarms ? 1 : 0
+  count = var.enabled && var.enable_cloudwatch_alarms ? 1 : 0
 }
 
 resource "aws_sns_topic" "rds_alarms" {
-  count = var.enable_cloudwatch_alarms ? 1 : 0
+  count = var.enabled && var.enable_cloudwatch_alarms ? 1 : 0
 
   name = "${var.identifier}-alarms"
 
@@ -26,7 +26,7 @@ resource "aws_sns_topic" "rds_alarms" {
 }
 
 data "aws_iam_policy_document" "rds_alarms" {
-  count = var.enable_cloudwatch_alarms ? 1 : 0
+  count = var.enabled && var.enable_cloudwatch_alarms ? 1 : 0
 
   statement {
     sid    = "AllowAccountManagement"
@@ -92,14 +92,14 @@ data "aws_iam_policy_document" "rds_alarms" {
 }
 
 resource "aws_sns_topic_policy" "rds_alarms" {
-  count = var.enable_cloudwatch_alarms ? 1 : 0
+  count = var.enabled && var.enable_cloudwatch_alarms ? 1 : 0
 
   arn    = aws_sns_topic.rds_alarms[0].arn
   policy = data.aws_iam_policy_document.rds_alarms[0].json
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
-  count = var.enable_cloudwatch_alarms ? 1 : 0
+  count = var.enabled && var.enable_cloudwatch_alarms ? 1 : 0
 
   alarm_name          = "${var.identifier}-free-storage-low"
   alarm_description   = "RDS FreeStorageSpace is at or below the configured threshold."
@@ -132,7 +132,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_database_connections" {
-  count = var.enable_cloudwatch_alarms ? 1 : 0
+  count = var.enabled && var.enable_cloudwatch_alarms ? 1 : 0
 
   alarm_name          = "${var.identifier}-database-connections-high"
   alarm_description   = "RDS DatabaseConnections is at or above the configured threshold."
@@ -165,7 +165,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_database_connections" {
 }
 
 resource "aws_db_event_subscription" "rds_events" {
-  count = var.enable_cloudwatch_alarms ? 1 : 0
+  count = var.enabled && var.enable_cloudwatch_alarms ? 1 : 0
 
   name             = "${var.identifier}-events"
   sns_topic        = aws_sns_topic.rds_alarms[0].arn

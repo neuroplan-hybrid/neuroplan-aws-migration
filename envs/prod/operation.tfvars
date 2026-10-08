@@ -23,8 +23,7 @@ compute_machine_type = "m5.xlarge"
 rosa_replicas        = 3
 
 # 운영 RDS 기본 사양
-# 비용 우선 기본값은 Single-AZ이다. T6 시연·RTO 측정 직전에
-# rds_multi_az를 true로 변경하고 Plan/승인/Apply 후 Failover를 수행한다.
+# 운영 RDS는 Single-AZ를 유지하며, 데이터 보호 검증은 T3 PITR로 수행한다.
 project_name              = "neuroplan"
 environment               = "prod"
 rds_identifier            = "neuroplan-rds-operation"
@@ -45,3 +44,6 @@ rds_final_snapshot_identifier = "neuroplan-rds-operation-final-20261020"
 
 rds_auto_minor_version_upgrade = false
 rds_apply_immediately          = true
+
+# rosa-on.tfvars와 같은 값으로 유지한다. 활성화는 별도 Plan·승인 후 진행한다.
+enable_rds_cloudwatch_alarms = false
