@@ -1,7 +1,7 @@
-# T7 런북 — DR 운영 중 온프레미스 LB 전환 (1008, r1: #69 리뷰 반영)
+# T7 런북 — DR 운영 중 온프레미스 LB 전환 (1008, r2: #69 리뷰 반영)
 
 > 담당 희재 · **P2·부록** · 시연 10/16 (T5로 DR 운영 상태가 된 뒤, 시간 여유가 있을 때만) · 리전 ap-northeast-2
-> 기준: #55 확정표 T7, 1차 PPT 3-17(LB Failover), 작업일지 0930 11장(DMZ NIC·LB 반환 경로), 런북 형식은 T4(#67)와 같음
+> 기준: **T1~T7 확정 번호 (#63·#64, `docs/decisions/rosa-runtime-cost-plan_1001.md` 10/8 갱신 절)** — #55 본문의 옛 T1~T8(T3 Multi-AZ 포함)에서는 T8이었음 / 확정표 T7, 1차 PPT 3-17(LB Failover), 작업일지 0930 11장(DMZ NIC·LB 반환 경로), 런북 형식은 T4(#67)와 같음
 > 비밀번호·계정 ID는 적지 않는다
 
 ## 1. 목적과 판정
@@ -29,6 +29,8 @@ DR NLB(AWS) → VPN → Infra VM ens161(192.168.24.62, DMZ NIC) ─ ARP ─→ V
 - 1차 대비 차이: 1차는 학원망 안에서 `curl --resolve`로 확인 → 2차는 **AWS에서 VPN을 지나 들어오는 실제 DR 트래픽** 중에 전환
 
 ## 3. 사전 조건 (T7 시작 전)
+
+- **LB2 관리 주소**: `LB2_HOST=192.168.14.12` (Mgmt 대역, 1차 IP 체계 `.12` = LB2). 4.2·4.4 가드가 lb1에서 이 주소로 ssh해 LB2 VIP를 확인함 → lb1에서 `ssh -o ConnectTimeout=5 root@192.168.14.12 hostname -s`가 `lb2`를 돌려주는지 먼저 확인
 
 ```bash
 # lb1, lb2 각각 (root) — 상태·반환 경로
@@ -88,9 +90,10 @@ done | tee ~/t7_arp_$(date +%m%d-%H%M).log
 ### 4.2 주입 (T_inject)
 ```bash
 # lb1 (root) — 호스트 + VIP 상태 가드 (LB1에만 VIP, LB2에는 없음)
+LB2_HOST=192.168.14.12
 me="$(hostname -s)"
 v1="$(ip -4 addr show ens192 | grep -c '192\.168\.24\.100/')"
-v2="$(ssh -o ConnectTimeout=5 root@192.168.14.12 "ip -4 addr show ens192 | grep -c '192\.168\.24\.100/' || true" || echo ERR)"
+v2="$(ssh -o ConnectTimeout=5 "root@$LB2_HOST" "ip -4 addr show ens192 | grep -c '192\.168\.24\.100/' || true" || echo ERR)"
 echo "host=$me lb1_vip=$v1 lb2_vip=$v2"
 if [[ "$me" == lb1 && "$v1" == 1 && "$v2" == 0 ]]; then
   echo "T_inject $(date '+%F %T.%3N %z')" | tee -a ~/t7_t0.log
@@ -115,9 +118,10 @@ fi
 ### 4.4 복구 측정 (LB1 복귀 = 두 번째 전환)
 ```bash
 # lb1 (root) — 호스트 + VIP 상태 가드 (LB2에만 VIP, LB1에는 없음)
+LB2_HOST=192.168.14.12
 me="$(hostname -s)"
 v1="$(ip -4 addr show ens192 | grep -c '192\.168\.24\.100/')"
-v2="$(ssh -o ConnectTimeout=5 root@192.168.14.12 "ip -4 addr show ens192 | grep -c '192\.168\.24\.100/' || true" || echo ERR)"
+v2="$(ssh -o ConnectTimeout=5 "root@$LB2_HOST" "ip -4 addr show ens192 | grep -c '192\.168\.24\.100/' || true" || echo ERR)"
 echo "host=$me lb1_vip=$v1 lb2_vip=$v2"
 if [[ "$me" == lb1 && "$v1" == 0 && "$v2" == 1 ]]; then
   echo "T_restore $(date '+%F %T.%3N %z')" | tee -a ~/t7_t0.log
