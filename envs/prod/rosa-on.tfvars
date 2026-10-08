@@ -46,3 +46,9 @@ rds_final_snapshot_identifier = "neuroplan-rds-operation-final-20261020"
 
 rds_auto_minor_version_upgrade = false
 rds_apply_immediately          = true
+
+# RDS CloudWatch Alarm / SNS 이메일
+# 수신자는 AWS의 구독 확인 이메일을 1회 승인해야 한다.
+# 이메일 주소는 Git에 기록하지 않고 로컬 secret tfvars 또는 TF_VAR_로 전달한다.
+# 10/12 RDS 생성 전에는 false를 유지하고, 수신자 확정 후 별도 Plan·승인으로 켠다.
+enable_rds_cloudwatch_alarms = false
