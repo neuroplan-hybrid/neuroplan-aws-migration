@@ -285,6 +285,32 @@ variable "rds_apply_immediately" {
   nullable    = true
 }
 
+# RDS CloudWatch Alarm / SNS Email
+# 이메일 주소는 일반 tfvars가 아닌 로컬 secret tfvars 또는 TF_VAR_로 전달한다.
+variable "enable_rds_cloudwatch_alarms" {
+  description = "RDS CloudWatch Alarm과 SNS 이메일 구독을 생성할지 여부"
+  type        = bool
+  default     = false
+}
+
+variable "rds_alarm_email_endpoints" {
+  description = "RDS Alarm SNS Topic 구독 이메일 주소 목록"
+  type        = list(string)
+  default     = []
+}
+
+variable "rds_free_storage_alarm_threshold_bytes" {
+  description = "RDS FreeStorageSpace Alarm 임계값(Byte)"
+  type        = number
+  default     = 4294967296
+}
+
+variable "rds_database_connections_alarm_threshold" {
+  description = "RDS DatabaseConnections Alarm 임계값"
+  type        = number
+  default     = 80
+}
+
 # ECR
 variable "ecr_force_delete" {
   description = "Allow ECR repositories to be deleted with images during cleanup"
