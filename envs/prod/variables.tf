@@ -293,12 +293,6 @@ variable "enable_rds_cloudwatch_alarms" {
   default     = false
 }
 
-variable "rds_alarm_email_endpoints" {
-  description = "RDS Alarm SNS Topic 구독 이메일 주소 목록"
-  type        = list(string)
-  default     = []
-}
-
 variable "rds_free_storage_alarm_threshold_bytes" {
   description = "RDS FreeStorageSpace Alarm 임계값(Byte)"
   type        = number
