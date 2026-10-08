@@ -19,84 +19,104 @@
 - name: Load RDS Master credentials
   ansible.builtin.import_tasks: load-master-secret.yml
 
-- name: Verify static RDS application account has CRUD-only grants and can read
-  ansible.builtin.shell: |
-    set -euo pipefail
-    umask 077
-    workdir="$(mktemp -d "${TMPDIR:-/tmp}/rds-app-account.XXXXXX")"
-    cleanup() {
-      rm -f "$workdir/master.cnf" "$workdir/app.cnf"
-      rmdir "$workdir"
-    }
-    trap cleanup EXIT
-
-    cat > "$workdir/master.cnf" <<'EOF'
-    [client]
-    protocol=tcp
-    host={{ rds_operation_endpoint }}
-    port={{ rds_operation_port }}
-    user={{ rds_operation_master_secret.username }}
-    password={{ rds_operation_master_secret.password | to_json }}
-    EOF
-    cat > "$workdir/app.cnf" <<'EOF'
-    [client]
-    protocol=tcp
-    host={{ rds_operation_endpoint }}
-    port={{ rds_operation_port }}
-    user={{ rds_operation_app_username }}
-    password={{ rds_operation_app_password | to_json }}
-    EOF
-    chmod 600 "$workdir/master.cnf" "$workdir/app.cnf"
-
-    {% for host in rds_operation_app_hosts %}
-    grant_quote="$(printf '\140')"
-    account_display="${grant_quote}{{ rds_operation_app_username }}${grant_quote}@${grant_quote}{{ host }}${grant_quote}"
-    expected_usage="GRANT USAGE ON *.* TO $account_display"
-    expected_crud="GRANT SELECT, INSERT, UPDATE, DELETE ON ${grant_quote}{{ rds_operation_database }}${grant_quote}.* TO $account_display"
-
-    is_allowed_grant() {
-      local grant="$1"
-      [[ "$grant" == "$expected_usage"* ]] || [[ "$grant" == "$expected_crud" ]]
-    }
-
-    # MariaDB SHOW GRANTS 형식(backtick으로 quoting된 user, host, database)을
-    # 실제 검사에 쓰는 같은 matcher로 확인한다.
-    is_allowed_grant "$expected_usage"
-    is_allowed_grant "$expected_crud"
-    if is_allowed_grant "GRANT ALL PRIVILEGES ON ${grant_quote}{{ rds_operation_database }}${grant_quote}.* TO $account_display"; then
-      echo "grant matcher accepted an excessive privilege" >&2
-      exit 1
-    fi
-
-    grants="$(mariadb --defaults-extra-file="$workdir/master.cnf" --batch --skip-column-names \
-      --execute "SHOW GRANTS FOR '{{ rds_operation_app_username }}'@'{{ host }}';")"
-
-    usage_seen=false
-    crud_seen=false
-    while IFS= read -r grant; do
-      if [[ "$grant" == "$expected_usage"* ]]; then
-        usage_seen=true
-      elif [[ "$grant" == "$expected_crud" ]]; then
-        crud_seen=true
-      else
-        echo "unexpected grant for $account_display" >&2
-        exit 1
-      fi
-    done <<<"$grants"
-
-    [[ "$usage_seen" == true && "$crud_seen" == true ]] || {
-      echo "required CRUD grants are missing for $account_display" >&2
-      exit 1
-    }
-
-    mariadb --defaults-extra-file="$workdir/app.cnf" --batch --skip-column-names \
-      --database="{{ rds_operation_database }}" \
-      --execute "SELECT CURRENT_USER(), DATABASE(), 1;" >/dev/null
-    {% endfor %}
-  args:
-    executable: /bin/bash
-  changed_when: false
+- name: Create private staging directory for RDS app account verification
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: rds-app-account-verify-
+  register: rds_operation_app_account_verify_staging
   no_log: true
+
+- name: Verify static RDS application account has CRUD-only grants and can read
+  block:
+    - name: Write private RDS Master verification client option file
+      ansible.builtin.copy:
+        dest: "{{ rds_operation_app_account_verify_staging.path }}/master.cnf"
+        mode: "0600"
+        content: |
+          [client]
+          protocol=tcp
+          host={{ rds_operation_endpoint }}
+          port={{ rds_operation_port }}
+          user={{ rds_operation_master_secret.username }}
+          password={{ rds_operation_master_secret.password | to_json }}
+      no_log: true
+
+    - name: Write private static RDS application client option file
+      ansible.builtin.copy:
+        dest: "{{ rds_operation_app_account_verify_staging.path }}/app.cnf"
+        mode: "0600"
+        content: |
+          [client]
+          protocol=tcp
+          host={{ rds_operation_endpoint }}
+          port={{ rds_operation_port }}
+          user={{ rds_operation_app_username }}
+          password={{ rds_operation_app_password | to_json }}
+      no_log: true
+
+    - name: Verify static RDS application account grants and read authentication
+      ansible.builtin.shell: |
+        set -euo pipefail
+        grant_quote="$(printf '\140')"
+
+        {% for host in rds_operation_app_hosts %}
+        account_display="${grant_quote}{{ rds_operation_app_username }}${grant_quote}@${grant_quote}{{ host }}${grant_quote}"
+        expected_usage="GRANT USAGE ON *.* TO $account_display"
+        expected_crud="GRANT SELECT, INSERT, UPDATE, DELETE ON ${grant_quote}{{ rds_operation_database }}${grant_quote}.* TO $account_display"
+
+        is_valid_usage_grant() {
+          local grant="$1"
+          local suffix
+          [[ "$grant" == "$expected_usage"* ]] || return 1
+          suffix="${grant#"$expected_usage"}"
+          [[ -z "$suffix" ]] && return 0
+          [[ "$suffix" =~ ^\ IDENTIFIED\ BY\ PASSWORD\ [^[:space:]]+$ ]]
+        }
+
+        # MariaDB SHOW GRANTS 정상 형식과 초과 권한 거부를 같은 matcher로 점검한다.
+        is_valid_usage_grant "$expected_usage"
+        is_valid_usage_grant "$expected_usage IDENTIFIED BY PASSWORD '*FAKEHASH'"
+        if is_valid_usage_grant "$expected_usage WITH GRANT OPTION"; then
+          echo "grant matcher accepted an excessive usage grant" >&2
+          exit 1
+        fi
+        [[ "$expected_crud" == "GRANT SELECT, INSERT, UPDATE, DELETE ON ${grant_quote}{{ rds_operation_database }}${grant_quote}.* TO $account_display" ]]
+
+        grants="$(mariadb --defaults-extra-file="{{ rds_operation_app_account_verify_staging.path }}/master.cnf" --batch --skip-column-names \
+          --execute "SHOW GRANTS FOR '{{ rds_operation_app_username }}'@'{{ host }}';")"
+
+        usage_seen=false
+        crud_seen=false
+        while IFS= read -r grant; do
+          if is_valid_usage_grant "$grant"; then
+            usage_seen=true
+          elif [[ "$grant" == "$expected_crud" ]]; then
+            crud_seen=true
+          else
+            echo "unexpected grant for $account_display" >&2
+            exit 1
+          fi
+        done <<<"$grants"
+
+        [[ "$usage_seen" == true && "$crud_seen" == true ]] || {
+          echo "required CRUD grants are missing for $account_display" >&2
+          exit 1
+        }
+
+        mariadb --defaults-extra-file="{{ rds_operation_app_account_verify_staging.path }}/app.cnf" --batch --skip-column-names \
+          --database="{{ rds_operation_database }}" \
+          --execute "SELECT CURRENT_USER(), DATABASE(), 1;" >/dev/null
+        {% endfor %}
+      args:
+        executable: /bin/bash
+      changed_when: false
+      no_log: true
+  always:
+    - name: Remove private RDS app account verification staging files
+      ansible.builtin.file:
+        path: "{{ rds_operation_app_account_verify_staging.path }}"
+        state: absent
+      no_log: true
 
 - name: Display static RDS application account verification result
   ansible.builtin.debug:
