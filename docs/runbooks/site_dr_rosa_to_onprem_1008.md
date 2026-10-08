@@ -38,9 +38,9 @@
 | **User RTO** | T_inject → T_user | 주 지표 |
 | 쓰기 차단 검증 후 복구까지 | T0 → T_user | 보조 (T0 = 롤아웃 완료 후 503 확인 시각이라, 롤아웃 중 먼저 시작된 실패는 포함하지 않음) |
 | **관측된 사용자 영향 구간** | T_first_fail → T_user | 보조 (k6 표본 기준. 측정 시작 시각·표본 간격을 함께 기록하고, 표본 사이·측정 시작 전 영향은 알 수 없음으로 표기, #82) |
+| Route 53 전파 시간 | T_unhealthy → T_dns | 보조 |
 
 - Control RTO(T_inject → T_dns)·User RTO(T_inject → T_user)는 **#68 정의 그대로** 주 지표. T_first_fail 기반 값은 보조 지표로만 쓴다
-| Route 53 전파 시간 | T_unhealthy → T_dns | 보조 |
 
 ## 2. 왜 전환되는가 (발표 설명용)
 
