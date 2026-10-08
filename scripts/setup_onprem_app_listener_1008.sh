@@ -11,11 +11,17 @@
 #     + parentRefs에 sectionName https-public-app 추가 (기존 parentRef가 sectionName https로 고정이면 hostname만으로는 붙지 않음)
 #   - dr-health(setup_dr_health_1006.sh)와 분리: 한쪽 rollback이 다른 쪽을 끊지 않게 (PR #40 리뷰 원칙)
 # 실행 위치: 온프렘 cp1 (root, kubectl)
-#   bash setup_onprem_app_listener_1008.sh <gateway|verify|rollback> [--apply]   # 기본 dry-run
+#   bash setup_onprem_app_listener_1008.sh <gateway|verify|verify-route|rollback> [--apply]   # 기본 dry-run
 # 단계
-#   gateway  listener 없으면 추가(+ annotation), 있으면 기대값 비교만 (다르면 중단)
-#   verify   읽기만: listener 상태, SNI app.neuroplan.cloud 인증서·HTTP 코드
-#   rollback annotation이 있을 때만(이 스크립트가 만든 경우만) listener 제거
+#   gateway       listener 없으면 추가(+ annotation), 있으면 전체 기대값 비교만 (하나라도 다르면 중단)
+#                 비교: hostname · port 443 · protocol HTTPS · tls.mode Terminate · certificateRefs(kind Secret, group "", name)
+#                       · allowedRoutes.namespaces.from Same
+#   verify        listener 단독 사전점검 (HTTPRoute 반영 전): listener 3개 상태 + SNI 인증서 SAN·검증(ssl_verify=0)
+#                 HTTP 코드는 판정하지 않음 (HTTPRoute 반영 전 404가 정상)
+#   verify-route  최종 라우팅 검증 (GitOps HTTPRoute 반영 후): / = 200, /api/learning/state(비인증) = 401,
+#                 둘 다 ssl_verify=0. 000·404·502·503 등 그 외 모두 FAIL → 종료 코드 1
+#   rollback      annotation이 있을 때만(이 스크립트가 만든 경우만) listener 제거
+# 실패 시 종료 코드 1 (verify·verify-route 포함)
 # 하지 않는 일: 인증서 발급·Secret 생성, HTTPRoute 변경, Gateway kubectl apply(last-applied가 nplan-tls-v1)
 # 주의: "명령 | grep -q"·"| head" 같은 조기 종료 파이프를 쓰지 않는다 (pipefail 거짓 실패, 작업일지 0930 3.9)
 set -euo pipefail
@@ -31,11 +37,11 @@ OWNER_ANNO="neuroplan.io/app-public-listener"
 OWNER_ANNO_PTR="neuroplan.io~1app-public-listener"
 KEEP_LISTENERS=(https https-dr-health)   # 변경 전후 상태를 비교할 기존 listener
 
-usage() { echo "사용법: bash $0 <gateway|verify|rollback> [--apply]" >&2; exit 1; }
+usage() { echo "사용법: bash $0 <gateway|verify|verify-route|rollback> [--apply]" >&2; exit 1; }
 PHASE="${1:-}"
 APPLY=0
 case "${2:-}" in "") ;; --apply) APPLY=1 ;; *) usage ;; esac
-case "$PHASE" in gateway|verify|rollback) ;; *) usage ;; esac
+case "$PHASE" in gateway|verify|verify-route|rollback) ;; *) usage ;; esac
 
 log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 die()  { printf '[%s] ⚠ %s → 중단 (변경 없음)\n' "$(date +%H:%M:%S)" "$*" >&2; exit 1; }
@@ -54,6 +60,13 @@ listener_field() { kubectl -n "$NS" get gateway "$GW" -o jsonpath="{.spec.listen
 listener_status() {
     kubectl -n "$NS" get gateway "$GW" -o jsonpath="{range .status.listeners[?(@.name==\"$1\")].conditions[*]}{.type}={.status} {end}"
 }
+listener_spec() {  # $1 listener → 비교용 한 줄 (group이 생략되면 빈 값 = core)
+    local q f
+    q=".spec.listeners[?(@.name==\"$1\")]"
+    f="{${q}"
+    kubectl -n "$NS" get gateway "$GW" -o jsonpath="hostname=${f}.hostname} port=${f}.port} protocol=${f}.protocol} mode=${f}.tls.mode} certs={range ${q}.tls.certificateRefs[*]}x{end} kind=${f}.tls.certificateRefs[0].kind} group=${f}.tls.certificateRefs[0].group} cert=${f}.tls.certificateRefs[0].name} from=${f}.allowedRoutes.namespaces.from}" \
+        | sed 's/certs=x /certs=1 /; s/certs=xx*/certs=n/'
+}
 owner_anno() { kubectl -n "$NS" get gateway "$GW" -o jsonpath="{.metadata.annotations['neuroplan\.io/app-public-listener']}"; }
 
 check_secret() {
@@ -71,11 +84,13 @@ phase_gateway() {
     check_secret
     log "변경 전 listener: $(listener_names | tr '\n' ' ')"
     if has_listener "$L_APP"; then
-        local h c
-        h="$(listener_field "$L_APP" '.hostname')"
-        c="$(listener_field "$L_APP" '.tls.certificateRefs[0].name')"
-        [[ "$h" == "$APP_HOST" && "$c" == "$TLS_SECRET" ]] || die "listener ${L_APP}가 이미 있으나 값이 다름 (hostname=${h}, cert=${c})"
-        log "listener ${L_APP} 이미 있음 (기대값 일치, annotation='$(owner_anno)') → 건너뜀"
+        local got want
+        got="$(listener_spec "$L_APP")"
+        want="hostname=${APP_HOST} port=443 protocol=HTTPS mode=Terminate certs=1 kind=Secret group= cert=${TLS_SECRET} from=Same"
+        [[ "$got" == "$want" ]] || die "listener ${L_APP}가 이미 있으나 값이 다름
+    기대: ${want}
+    현재: ${got}"
+        log "listener ${L_APP} 이미 있음 (전체 기대값 일치, annotation='$(owner_anno)') → 건너뜀"
         return 0
     fi
     local value patch
@@ -94,25 +109,49 @@ phase_gateway() {
     fi
 }
 
-phase_verify() {
-    local fail=0 st code route
+https_probe() {  # $1 path → "HTTP코드 ssl_verify" (전송 실패면 "000 -")
+    local r
+    r="$(curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 5 \
+        --resolve "${APP_HOST}:${VERIFY_PORT}:${VERIFY_IP}" "https://${APP_HOST}:${VERIFY_PORT}$1" 2>/dev/null)" || true
+    echo "${r:-000 -}"
+}
+
+check_listeners() {  # 반환: 실패 수
+    local n st f=0
     for n in "$L_APP" "${KEEP_LISTENERS[@]}"; do
         st="$(listener_status "$n")"
         log "listener ${n}: ${st:-없음}"
-        [[ "$st" == *"Accepted=True"* && "$st" == *"Programmed=True"* && "$st" == *"ResolvedRefs=True"* ]] || { log "  [FAIL] ${n} 상태 이상"; fail=1; }
+        [[ "$st" == *"Accepted=True"* && "$st" == *"Programmed=True"* && "$st" == *"ResolvedRefs=True"* ]] || { log "  [FAIL] ${n} 상태 이상"; f=$((f+1)); }
     done
+    return "$f"
+}
+
+phase_verify() {  # listener 단독 사전점검 (HTTPRoute 반영 전)
+    local fail=0 san r
+    check_listeners || fail=1
     log "annotation: '$(owner_anno)'"
-    log "SNI ${APP_HOST} → ${VERIFY_IP}:${VERIFY_PORT} 인증서:"
-    timeout 10 openssl s_client -connect "${VERIFY_IP}:${VERIFY_PORT}" -servername "$APP_HOST" </dev/null 2>/dev/null \
-        | openssl x509 -noout -issuer -enddate -ext subjectAltName 2>/dev/null || { log "  [FAIL] TLS 핸드셰이크 실패 (unrecognized name이면 listener 없음)"; fail=1; }
-    code="$(curl -s -o /dev/null -w '%{http_code} ssl_verify=%{ssl_verify_result}' --max-time 5 \
-        --resolve "${APP_HOST}:${VERIFY_PORT}:${VERIFY_IP}" "https://${APP_HOST}:${VERIFY_PORT}/" || true)"
-    route="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-        --resolve "${APP_HOST}:${VERIFY_PORT}:${VERIFY_IP}" "https://${APP_HOST}:${VERIFY_PORT}/api/learning/state" || true)"
-    log "  /                    : ${code}   (HTTPRoute 반영 후 기대 200 ssl_verify=0, 반영 전 404)"
-    log "  /api/learning/state  : ${route}   (HTTPRoute 반영 후 기대 401 = Backend 도달, 반영 전 404)"
+    san="$(timeout 10 openssl s_client -connect "${VERIFY_IP}:${VERIFY_PORT}" -servername "$APP_HOST" </dev/null 2>/dev/null \
+        | openssl x509 -noout -issuer -enddate -ext subjectAltName 2>/dev/null || true)"
+    log "SNI ${APP_HOST} 인증서: ${san//$'\n'/ }"
+    [[ "$san" == *"DNS:${APP_HOST}"* ]] || { log "  [FAIL] TLS 핸드셰이크 실패 또는 SAN에 ${APP_HOST} 없음 (unrecognized name이면 listener 없음)"; fail=1; }
+    r="$(https_probe /)"
+    log "  / : ${r}   (인증서 검증만 판정: ssl_verify=0, HTTP 코드는 HTTPRoute 반영 전이라 판정 안 함)"
+    [[ "${r#* }" == "0" && "${r%% *}" != "000" ]] || { log "  [FAIL] 인증서 검증 실패 또는 전송 실패"; fail=1; }
     [[ $fail -eq 0 ]] || die "verify 실패 항목 있음"
-    log "verify OK (HTTP 200/401은 HTTPRoute GitOps 반영 후 판단)"
+    log "verify OK (listener 사전점검). HTTPRoute 반영 후 verify-route 실행"
+}
+
+phase_verify_route() {  # 최종 라우팅 검증 (GitOps HTTPRoute 반영 후)
+    local fail=0 r1 r2
+    check_listeners || fail=1
+    r1="$(https_probe /)"
+    r2="$(https_probe /api/learning/state)"
+    log "  /                    : ${r1}   (기대 200 0 = Frontend)"
+    log "  /api/learning/state  : ${r2}   (기대 401 0 = Backend 도달, 비인증)"
+    [[ "$r1" == "200 0" ]] || { log "  [FAIL] / 기대 200 0, 실제 ${r1}"; fail=1; }
+    [[ "$r2" == "401 0" ]] || { log "  [FAIL] /api/learning/state 기대 401 0, 실제 ${r2}"; fail=1; }
+    [[ $fail -eq 0 ]] || die "verify-route 실패 항목 있음"
+    log "verify-route OK (Frontend 200, Backend 401, 인증서 검증 통과)"
 }
 
 phase_rollback() {
@@ -128,5 +167,5 @@ phase_rollback() {
 }
 
 log "단계=${PHASE} 모드=$(mode) namespace=${NS}"
-"phase_${PHASE}"
+"phase_${PHASE//-/_}"
 log "완료 (${PHASE}, $(mode))"
