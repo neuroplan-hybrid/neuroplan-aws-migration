@@ -330,7 +330,7 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 | 일정 | — | #33 (10/12~10/16 ROSA ON, 10/16 18:00 destroy) | #33 |
 
 ### T5 진행 순서 (#53 확정, #55 반영)
-ROSA Writer 차단·T0 기록 → 복제 catch-up·마지막 쓰기 확인 → 온프레미스 db-primary 승격 → 단일 Writer·제한된 쓰기 검증 → ROSA 1 / DR 0 상태에서 routing health 실패 주입 → DR DNS 응답 확인·온프레미스 쓰기 재개 → k6 복구 판정 → ROSA 0 / DR 1 고정, ROSA 쓰기 차단 유지
+ROSA Backend 쓰기 차단·T0 기록 → 복제 catch-up·마지막 쓰기 확인 → 온프레미스 db-primary 승격 → 단일 Writer·제한된 쓰기 검증 → ROSA 1 / DR 0 상태에서 routing health 실패 주입 → DR DNS 응답 확인·온프레미스 쓰기 재개 → k6 복구 판정 → ROSA 0 / DR 1 고정, ROSA 쓰기 차단 유지
 
 - 실제 장애와 순서가 다른 구간은 보고서에서 별도 RTO 구간으로 기록
 - 전체 시연표(T1~T7)는 `rosa-runtime-cost-plan_1001.md` 10/8 갱신 절 참조

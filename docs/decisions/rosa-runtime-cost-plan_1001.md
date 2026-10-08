@@ -568,7 +568,7 @@ Cost Explorer는 최대 하루 늦게 반영될 수 있으므로 화면 값에 �
 | 6장 "T6 승인 시 RDS Multi-AZ Failover 검증" | 검증 항목 | 삭제 (위와 같음) | #55 |
 | 9장 10/16 | Worker/배포/VPN/DR 장애 테스트 | **Worker/Pod → Deployment Safety → PITR → VPN → ROSA→On-Prem DR 검증, Failback 절차 설명** | #33, #55 |
 | 비용 | 워커 타입 미확정 추정 | **m5.xlarge × 3** 기준 추정 + Cost Explorer 실측 (상한·단계 기준 $230 / $430 / $480 유지) | #33 |
-| 이미지 Pull | ECR 인증 방식 확인 | ECR 단일(Harbor 미러 없음). 온프렘 DR은 `ecr-pull-secret` 갱신 Job(A, 10/12 필수) + `imagePullPolicy: IfNotPresent`(B, gitops #6) | #33, #53 |
+| 이미지 Pull | ECR 인증 방식 확인 | ECR 단일(Harbor 미러 없음). 온프렘 DR은 VM 부팅 후 On-Prem Sync/재배포 전에 `ecr-pull-secret` 갱신 Job(A) 필수 + `imagePullPolicy: IfNotPresent`(B, gitops #6). ROSA는 Worker IAM 기반 ECR Pull이므로 A와 ROSA Apply는 직접 연결하지 않음 | #33, #53 |
 
 ### 10/16 장애 시연 번호 (확정)
 | # | 시나리오 | 우선 | 담당 |
