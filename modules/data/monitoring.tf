@@ -1,15 +1,10 @@
 # RDS CloudWatch Alarm and SNS email delivery
 #
-# Alarm 판단은 AWS CloudWatch에서 수행한다. 이메일 주소는 tfvars에
-# 기록하지 않고 로컬 secret tfvars 또는 TF_VAR_로 전달한다.
-# SNS Email subscription은 수신자가 AWS 확인 메일을 승인하기 전까지
-# pending confirmation 상태이며, 승인 전에는 알림이 전달되지 않는다.
+# Alarm 판단은 AWS CloudWatch에서 수행한다. SNS Topic·Alarm만 Terraform으로
+# 관리한다. 이메일 구독은 수신자 확인 전에는 Terraform으로 완전 삭제할 수 없으므로
+# Apply 후 Topic ARN으로 CLI 또는 콘솔에서 별도 등록한다.
 
 data "aws_caller_identity" "current" {
-  count = var.enable_cloudwatch_alarms ? 1 : 0
-}
-
-data "aws_region" "current" {
   count = var.enable_cloudwatch_alarms ? 1 : 0
 }
 
@@ -101,16 +96,6 @@ resource "aws_sns_topic_policy" "rds_alarms" {
 
   arn    = aws_sns_topic.rds_alarms[0].arn
   policy = data.aws_iam_policy_document.rds_alarms[0].json
-}
-
-resource "aws_sns_topic_subscription" "rds_alarm_email" {
-  for_each = var.enable_cloudwatch_alarms ? toset(var.alarm_email_endpoints) : toset([])
-
-  topic_arn = aws_sns_topic.rds_alarms[0].arn
-  protocol  = "email"
-  endpoint  = each.value
-
-  endpoint_auto_confirms = false
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
