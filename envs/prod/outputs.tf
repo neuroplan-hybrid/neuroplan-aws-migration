@@ -103,6 +103,16 @@ output "rds_master_user_secret_arn" {
   value       = try(module.data[0].master_user_secret_arn, null)
 }
 
+output "rds_alarm_sns_topic_arn" {
+  description = "RDS CloudWatch Alarm 이메일 전달용 SNS Topic ARN"
+  value       = try(module.data[0].alarm_sns_topic_arn, null)
+}
+
+output "rds_cloudwatch_alarm_names" {
+  description = "생성된 RDS CloudWatch Alarm 이름"
+  value       = try(module.data[0].cloudwatch_alarm_names, [])
+}
+
 
 # ---------- Vault / KMS ----------
 
