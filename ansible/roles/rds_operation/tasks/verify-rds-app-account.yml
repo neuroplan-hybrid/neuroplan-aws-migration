@@ -6,26 +6,62 @@
       - rds_operation_app_username is match('^[A-Za-z0-9_]+$')
       - rds_operation_app_password | length > 0
       - rds_operation_app_password is match('^[A-Za-z0-9]+$')
+      - rds_operation_app_hosts | length > 0
+      - >-
+        (rds_operation_app_hosts
+        | select('match', '^[A-Za-z0-9.%_-]+$')
+        | list
+        | length) == (rds_operation_app_hosts | length)
     fail_msg: >-
-      verify-rds-app-account에는 앱 계정명과 실행 시 전달한 비밀번호가 필요합니다.
+      verify-rds-app-account에는 앱 계정·비밀번호와 유효한 접속 Host 패턴이 필요합니다.
   no_log: true
 
-- name: Verify static RDS application account can read the application database
+- name: Load RDS Master credentials
+  ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Verify static RDS application account has CRUD-only grants and can read
   ansible.builtin.shell: |
     set -euo pipefail
+    {% for host in rds_operation_app_hosts %}
+    account="'{{ rds_operation_app_username }}'@'{{ host }}'"
+    expected_crud="GRANT SELECT, INSERT, UPDATE, DELETE ON `{{ rds_operation_database }}`.* TO $account"
+    grants="$(mariadb --protocol=tcp --batch --skip-column-names \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "SHOW GRANTS FOR $account;")"
+
+    usage_seen=false
+    crud_seen=false
+    while IFS= read -r grant; do
+      if [[ "$grant" == "GRANT USAGE ON *.* TO $account"* ]]; then
+        usage_seen=true
+      elif [[ "$grant" == "$expected_crud" ]]; then
+        crud_seen=true
+      else
+        echo "unexpected grant for $account" >&2
+        exit 1
+      fi
+    done <<<"$grants"
+
+    [[ "$usage_seen" == true && "$crud_seen" == true ]] || {
+      echo "required CRUD grants are missing for $account" >&2
+      exit 1
+    }
+
     mariadb --protocol=tcp --batch --skip-column-names \
       --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
       --user="{{ rds_operation_app_username }}" --password="$RDS_OPERATION_APP_PASSWORD" \
       --database="{{ rds_operation_database }}" \
-      --execute "SELECT CURRENT_USER(), DATABASE(), 1;"
+      --execute "SELECT CURRENT_USER(), DATABASE(), 1;" >/dev/null
+    {% endfor %}
   args:
     executable: /bin/bash
   environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
     RDS_OPERATION_APP_PASSWORD: "{{ rds_operation_app_password }}"
-  register: rds_operation_app_account_verify
   changed_when: false
   no_log: true
 
 - name: Display static RDS application account verification result
   ansible.builtin.debug:
-    msg: "RDS static application account read verification succeeded."
+    msg: "RDS static application account CRUD-only grants and read authentication succeeded."
