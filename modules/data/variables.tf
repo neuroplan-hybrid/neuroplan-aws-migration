@@ -191,17 +191,6 @@ variable "enable_cloudwatch_alarms" {
   default     = false
 }
 
-variable "alarm_email_endpoints" {
-  description = "RDS Alarm SNS Topic을 구독할 이메일 주소 목록입니다. 구독자는 AWS 발송 확인 이메일에서 구독을 승인해야 합니다."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = !var.enable_cloudwatch_alarms || length(var.alarm_email_endpoints) > 0
-    error_message = "CloudWatch Alarm을 활성화하면 alarm_email_endpoints에 이메일 주소를 하나 이상 지정해야 합니다."
-  }
-}
-
 variable "free_storage_alarm_threshold_bytes" {
   description = "FreeStorageSpace Alarm 임계값(Byte)입니다. 기본값은 4GiB입니다."
   type        = number
