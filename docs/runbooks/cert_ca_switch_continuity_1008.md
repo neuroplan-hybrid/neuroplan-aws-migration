@@ -1,4 +1,4 @@
-# T7 런북 — 인증서 CA 전환 무중단 검증 (1008, #77 / r1·r2: #78 리뷰 반영)
+# T7 런북 — 인증서 CA 전환 무중단 검증 (1008, #77 / r1~r3: #78 리뷰 반영)
 
 > 담당 희재 · 부록 · 리허설·촬영 10/9~11 (ROSA 불필요) · 리전 ap-northeast-2
 > 기준: #77 (T7 변경 합의, 정현·예린 조건부 동의), 교체 절차 = 런북 `cert_ca_switch_1007.md`(#62) 4장
@@ -93,6 +93,17 @@ curl -s -o /dev/null -w 'app /api/learning/state %{http_code}\n' --max-time 10 \
 
 - **10/11 촬영 시점까지 A가 안 되면 B로 확정**하고 7장에 기록한다. 이후 4장의 `[A]` 표시 단계는 건너뛴다
 
+**판정 결과를 파일에 기록 (4.1·4.6이 이 값만 읽는다)**
+```bash
+# 실행 위치: Infra VM (root) — 위 표로 판정한 범위를 입력 (A 또는 B)
+read -rp 'T7 범위 (A/B): ' T7_SCOPE
+case "$T7_SCOPE" in A|B) echo "$T7_SCOPE" > ~/t7_scope && echo "범위=$(cat ~/t7_scope) 기록" ;; *) echo "⚠ A 또는 B만 입력 → 다시 실행" ;; esac
+```
+- 4.1·4.6은 공통으로 아래 줄로 대상 호스트를 정한다 (파일이 없거나 값이 A·B가 아니면 `HOSTS`가 비어 다음 단계에서 멈춤)
+```bash
+case "$(cat ~/t7_scope 2>/dev/null)" in A) HOSTS="app dr-health" ;; B) HOSTS="dr-health" ;; *) HOSTS="" ;; esac; echo "범위=$(cat ~/t7_scope 2>/dev/null) HOSTS=${HOSTS:-없음}"
+```
+
 ### 3.5 [A] k6 이름 해석 (Infra VM 한정, 종료 후 제거)
 ```bash
 # 실행 위치: Infra VM (root)
@@ -107,10 +118,11 @@ getent hosts app.neuroplan.cloud      # 기대: 192.168.24.100
 **창 1 — TLS 표본 기록 (목표 약 1초 간격, 새 연결마다 인증서 검증)**
 ```bash
 # 실행 위치: Infra VM (root)
-HOSTS="app dr-health"      # B면 HOSTS="dr-health"
+case "$(cat ~/t7_scope 2>/dev/null)" in A) HOSTS="app dr-health" ;; B) HOSTS="dr-health" ;; *) HOSTS="" ;; esac
+echo "범위=$(cat ~/t7_scope 2>/dev/null) HOSTS=${HOSTS:-없음 → 3.4 먼저, 기록 시작 안 함}"
 LOG=~/t7_tls_$(date +%m%d-%H%M).log
 declare -A FAIL_SINCE=()
-while :; do
+[[ -n "$HOSTS" ]] && while :; do
   round=$(date +%s%N)
   for h in $HOSTS; do
     p=/; [ "$h" = dr-health ] && p=/actuator/health/routing
@@ -203,9 +215,11 @@ ssh root@192.168.14.31 "kubectl -n application patch secret neuroplan-cloud-onpr
 
 ### 4.6 원복 확인·정리 (모든 확인이 통과할 때만 백업 삭제)
 ```bash
-# 실행 위치: Infra VM (root) — HOSTS는 4.1과 같게 (A: "app dr-health", B: "dr-health")
-HOSTS="app dr-health"
+# 실행 위치: Infra VM (root) — 범위는 3.4에서 기록한 ~/t7_scope (A: app·dr-health, B: dr-health)
+case "$(cat ~/t7_scope 2>/dev/null)" in A) HOSTS="app dr-health" ;; B) HOSTS="dr-health" ;; *) HOSTS="" ;; esac
+echo "범위=$(cat ~/t7_scope 2>/dev/null) HOSTS=${HOSTS:-없음}"
 ok=1
+[[ -n "$HOSTS" ]] || { echo "[FAIL] 범위 기록(~/t7_scope) 없음"; ok=0; }
 crt="$(ssh root@192.168.14.31 "kubectl -n application get secret neuroplan-cloud-onprem-tls -o jsonpath='{.data.tls\.crt}'" | base64 -d)"
 iss="$(openssl x509 -noout -issuer <<<"$crt" 2>/dev/null)"
 echo "Secret: $iss"; openssl x509 -noout -enddate <<<"$crt"
