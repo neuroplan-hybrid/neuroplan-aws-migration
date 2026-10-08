@@ -119,6 +119,20 @@
     - rds_operation_run_mode == "cutover"
   tags: [cutover]
 
+- name: Provision the static RDS application account
+  ansible.builtin.import_tasks: provision-rds-app-account.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode == "provision-rds-app-account"
+  tags: [provision-rds-app-account]
+
+- name: Verify the static RDS application account
+  ansible.builtin.import_tasks: verify-rds-app-account.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode == "verify-rds-app-account"
+  tags: [verify-rds-app-account]
+
 - name: Configure On-Prem node as RDS GTID replica
   ansible.builtin.import_tasks: configure-onprem-replica.yml
   when:

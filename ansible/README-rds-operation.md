@@ -4,7 +4,8 @@
 
 ```text
 최신 정상 논리 덤프 선택 → RDS Import → On-Prem → RDS GTID 동기화
-→ 승인된 Cutover → RDS Primary → On-Prem DB 2대 Replica → 수동 DR 승격
+→ 승인된 Cutover → RDS 정적 앱 계정 준비 → ROSA Backend → RDS 전환
+→ RDS Primary → On-Prem DB 2대 Replica → 수동 DR 승격
 ```
 
 Terraform은 RDS, DB Subnet Group, Parameter Group, Secrets Manager를 만든다. 이 Ansible은
@@ -24,10 +25,12 @@ DB 내용·복제 역할만 다룬다. VPC, VPN, Route Table, Security Group, Ma
   않고 중단하므로, 상태를 수동 검증한 뒤 조치해야 한다.
 - Cutover는 앱 쓰기 차단과 기술 검증을 마친 뒤
   `-e rds_operation_cutover_approved=true` 하나로 실행한다.
+- Cutover가 끝난 뒤에만 RDS 정적 앱 계정 `ir_app`을 CRUD 권한으로 준비한다.
+  ROSA Backend의 DB URL·Kubernetes Secret 전환은 GitOps의 별도 변경이다.
 - DR 승격 대상은 `db-primary`로 고정하며, 실제 쓰기 전환은
   `rds_operation_dr_writes_fenced=true`, `rds_operation_dr_promotion_approved=true`가 필요하다.
-- 비밀번호, AWS Access Key, RDS Secret 내용은 Git에 저장하지 않는다. 복제 비밀번호는
-  Ansible Vault 또는 실행 시 `-e`로만 전달한다.
+- 비밀번호, AWS Access Key, RDS Secret 내용은 Git에 저장하지 않는다. 정적 앱 계정 비밀번호는
+  Ansible Vault 암호화 변수 파일로만 전달한다.
 
 ## 설치와 설정
 
@@ -73,7 +76,36 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-initial-sync.yml \
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-cutover.yml \
   -e rds_operation_cutover_approved=true
 
-# 4. 운영 토폴로지: RDS → db-primary, db-replica
+# 4. Cutover 뒤 ROSA Backend 전환 전에 RDS 정적 앱 계정(ir_app)을 준비·검증
+# Endpoint·Master Secret ARN은 AWS API로 자동 조회한다.
+# 앱 비밀번호는 Git·명령행에 넣지 않는다. 아래 파일은 .gitignore 대상의 로컬 암호화 파일이다.
+ansible-vault create group_vars/rds_operation.vault.yml
+# 내용 예시: rds_operation_app_password: "<앱 비밀번호>"
+
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
+  --ask-vault-pass \
+  -e @group_vars/rds_operation.vault.yml \
+  -e rds_operation_execute_mutations=true
+
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
+  --ask-vault-pass \
+  -e @group_vars/rds_operation.vault.yml \
+  -e rds_operation_run_mode=verify-rds-app-account
+
+# 검증이 끝나면 GitOps에서 ROSA Backend의 DB_URL과 DB_USERNAME/DB_PASSWORD Secret을
+# RDS Endpoint와 ir_app 계정으로 바꾼 뒤 rollout 및 로그인·조회·쓰기를 확인한다.
+
+정적 앱 계정 Playbook은 각 `rds_operation_app_hosts`에 대해 기존 직접 권한과
+`GRANT OPTION`을 먼저 제거한 뒤 `infraready.*`의
+`SELECT, INSERT, UPDATE, DELETE`만 다시 부여한다.
+따라서 재실행해도 `ir_app`의 권한 범위가 CRUD-only로 수렴한다.
+
+`verify-rds-app-account` 모드는 Master 계정으로 `SHOW GRANTS`를 확인해
+`USAGE ON *.*`와 위 CRUD 권한 외의 추가 권한이 있으면 실패한다.
+그 뒤 `ir_app`으로 실제 인증·읽기 접속을 확인한다. 실제 애플리케이션 쓰기 동작은
+ROSA Backend rollout 후 로그인·조회·저장 smoke test에서 확인한다.
+
+# 5. 운영 토폴로지: RDS → db-primary, db-replica
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=configure-onprem-replica \
   -e rds_operation_execute_mutations=true \
@@ -82,7 +114,7 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=verify-onprem-replica
 
-# 5. T6 DR Drill: db-primary만 수동 승격한다. MaxScale/Route는 이 Playbook이 바꾸지 않는다.
+# 6. T6 DR Drill: db-primary만 수동 승격한다. MaxScale/Route는 이 Playbook이 바꾸지 않는다.
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-dr-promote.yml \
   -e rds_operation_execute_mutations=true \
   -e rds_operation_dr_writes_fenced=true \

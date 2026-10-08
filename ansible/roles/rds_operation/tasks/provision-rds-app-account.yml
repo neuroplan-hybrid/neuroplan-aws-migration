@@ -1,0 +1,76 @@
+---
+- name: Require static RDS application account inputs
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_database is match('^[A-Za-z0-9_]+$')
+      - rds_operation_app_username is match('^[A-Za-z0-9_]+$')
+      - rds_operation_app_password | length > 0
+      - rds_operation_app_password is match('^[A-Za-z0-9]+$')
+      - rds_operation_app_hosts | length > 0
+      - >-
+        (rds_operation_app_hosts
+        | select('match', '^[A-Za-z0-9.%_-]+$')
+        | list
+        | length) == (rds_operation_app_hosts | length)
+    fail_msg: >-
+      provision-rds-app-account에는 변경 승인, 영숫자 앱 비밀번호와
+      유효한 접속 Host 패턴이 필요합니다.
+  no_log: true
+
+- name: Load RDS Master credentials
+  ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Create private staging directory for the RDS application account
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: rds-app-account-
+  register: rds_operation_app_account_staging
+  no_log: true
+
+- name: Provision the CRUD-only static RDS application account
+  block:
+    - name: Write private RDS Master client option file
+      ansible.builtin.copy:
+        dest: "{{ rds_operation_app_account_staging.path }}/master.cnf"
+        mode: "0600"
+        content: |
+          [client]
+          protocol=tcp
+          host={{ rds_operation_endpoint }}
+          port={{ rds_operation_port }}
+          user={{ rds_operation_master_secret.username }}
+          password={{ rds_operation_master_secret.password | to_json }}
+      no_log: true
+
+    - name: Write private static RDS application account DDL
+      ansible.builtin.copy:
+        dest: "{{ rds_operation_app_account_staging.path }}/provision.sql"
+        mode: "0600"
+        content: |
+          {% for host in rds_operation_app_hosts %}
+          CREATE USER IF NOT EXISTS '{{ rds_operation_app_username }}'@'{{ host }}'
+            IDENTIFIED BY '{{ rds_operation_app_password }}';
+          REVOKE ALL PRIVILEGES, GRANT OPTION
+            FROM '{{ rds_operation_app_username }}'@'{{ host }}';
+          ALTER USER '{{ rds_operation_app_username }}'@'{{ host }}'
+            IDENTIFIED BY '{{ rds_operation_app_password }}';
+          GRANT SELECT, INSERT, UPDATE, DELETE
+            ON {{ rds_operation_database }}.*
+            TO '{{ rds_operation_app_username }}'@'{{ host }}';
+          {% endfor %}
+      no_log: true
+
+    - name: Run private static RDS application account DDL
+      ansible.builtin.shell: >-
+        mariadb --defaults-extra-file="{{ rds_operation_app_account_staging.path }}/master.cnf"
+        < "{{ rds_operation_app_account_staging.path }}/provision.sql"
+      args:
+        executable: /bin/bash
+      no_log: true
+  always:
+    - name: Remove private static RDS application account staging files
+      ansible.builtin.file:
+        path: "{{ rds_operation_app_account_staging.path }}"
+        state: absent
+      no_log: true
