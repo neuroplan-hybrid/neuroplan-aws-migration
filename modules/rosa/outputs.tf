@@ -17,3 +17,8 @@ output "cluster_state" {
   description = "Current state of the ROSA HCP cluster"
   value       = module.rosa_hcp.cluster_state
 }
+
+output "worker_role_arn" {
+  description = "ARN of the ROSA HCP Worker IAM Role"
+  value       = module.rosa_hcp.account_roles_arn["HCP-ROSA-Worker"]
+}
