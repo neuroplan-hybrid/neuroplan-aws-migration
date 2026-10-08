@@ -314,3 +314,23 @@ Route 53 → DR NLB → S2S VPN → Infra VM → VIP 192.168.24.100:443 → NGF 
 - [cert-manager Operator for Red Hat OpenShift](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/security_and_compliance/cert-manager-operator-for-red-hat-openshift)
 - [Vault MySQL/MariaDB database secrets engine](https://developer.hashicorp.com/vault/docs/secrets/databases/mysql-maria)
 - [Grafana k6](https://grafana.com/docs/k6/latest/)
+
+## 8. 10/8 갱신 (#33·#53·#55·#63)
+
+> 위 본문은 0930 결정 당시 기준으로 남겨 둔다. 아래 항목은 이후 확정된 내용이며, 본문과 다르면 아래를 따른다.
+
+| 항목 | 0930 기준 | 10/8 확정 | 근거 |
+|---|---|---|---|
+| 장애 시연 번호 | **T6** = ROSA Primary 장애 → 온프렘 DR (핵심) | **T5** = ROSA → 온프레미스 전환·데이터 정합성 (P0·핵심). T6 = 수동 Failback 런북 설명 | #55, #63 |
+| 헬스체크 경로 | `/health/ready` | Route 53 HC `/actuator/health/routing`(DB 제외), K8s readiness `/actuator/health/readiness`(DB 포함), liveness `/actuator/health/liveness` | #34, #53 |
+| RTO 정의 (C-2) | User RTO = T0 → k6 에러율 0 복귀 (T3) | User RTO = T0 → k6 로그인·조회·저장 **30초 연속 성공** 시작 시점 / Control RTO = T0 → probe가 권한 DNS 응답 변경 확인 | #33, #53 |
+| 인증서 (A-2) | Router·NGF에 같은 인증서 | **환경별 2개** (온프렘 `app`·`dr-health` / ROSA `app`·`primary-health`). ROSA는 Route `spec.tls.externalCertificate` + Router 최소 RBAC. 예비 CA ZeroSSL Warm Standby, 수동 전환(런북 `docs/runbooks/cert_ca_switch_1007.md`) | #46, #59, #62, gitops #5 |
+| 이미지 | — | ECR 단일 (Harbor 미러 없음, ECR 장애 시 새 Pull 실패) | #53 |
+| RDS Multi-AZ (비용표) | 평소 Single-AZ, T6 직전에만 Multi-AZ | **Multi-AZ 시연 없음**, Single-AZ 유지. 데이터 보호는 T3 PITR | #55, #63 |
+| 일정 | — | #33 (10/12~10/16 ROSA ON, 10/16 18:00 destroy) | #33 |
+
+### T5 진행 순서 (#53 확정, #55 반영)
+ROSA Writer 차단·T0 기록 → 복제 catch-up·마지막 쓰기 확인 → 온프레미스 db-primary 승격 → 단일 Writer·제한된 쓰기 검증 → ROSA 1 / DR 0 상태에서 routing health 실패 주입 → DR DNS 응답 확인·온프레미스 쓰기 재개 → k6 복구 판정 → ROSA 0 / DR 1 고정, ROSA 쓰기 차단 유지
+
+- 실제 장애와 순서가 다른 구간은 보고서에서 별도 RTO 구간으로 기록
+- 전체 시연표(T1~T7)는 `rosa-runtime-cost-plan_1001.md` 10/8 갱신 절 참조
