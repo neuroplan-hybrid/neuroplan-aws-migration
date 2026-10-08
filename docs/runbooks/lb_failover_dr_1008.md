@@ -1,4 +1,4 @@
-# T7 런북 — DR 운영 중 온프레미스 LB 전환 (초안 1008)
+# T7 런북 — DR 운영 중 온프레미스 LB 전환 (1008, r1: #69 리뷰 반영)
 
 > 담당 희재 · **P2·부록** · 시연 10/16 (T5로 DR 운영 상태가 된 뒤, 시간 여유가 있을 때만) · 리전 ap-northeast-2
 > 기준: #55 확정표 T7, 1차 PPT 3-17(LB Failover), 작업일지 0930 11장(DMZ NIC·LB 반환 경로), 런북 형식은 T4(#67)와 같음
@@ -13,7 +13,7 @@
 | 기대 동작 | VIP가 LB2로 이동 + GARP → Infra VM이 ARP로 새 VIP 주인을 찾음 → DR 진입 경로 유지 |
 | 측정 유형 | 연속성 (k6 실패 수, probe `dr` 최대 연속 실패 시간) |
 | PASS | ① VIP가 LB2로 이동 ② Infra VM ARP의 VIP MAC이 LB2로 바뀜 ③ probe `dr` 최대 연속 실패 시간 측정·기록 ④ k6 로그인·조회·저장 실패 수 기록 (목표 0) ⑤ DR NLB Target healthy 유지 ⑥ 복구 후 VIP가 LB1로 돌아오고 같은 지표 기록 |
-| 중단 | probe `dr` 30초 연속 실패, VIP가 양쪽 모두 없음 / 양쪽 모두 있음(split-brain) → 즉시 4.5 |
+| 중단 | probe `dr` 30초 연속 실패, VIP가 양쪽 모두 없음 / 양쪽 모두 있음(split-brain) → **4.4 복구(LB1 keepalived start) → 4.5 원상 확인**. split-brain이면 4.4 가드가 막으므로 4.6 수동 판단 |
 
 ## 2. 왜 끊기지 않는가 (발표 설명용)
 
@@ -39,6 +39,15 @@ ip route get 10.20.0.10        # 기대: via 192.168.24.62 dev ens192
 - 기대: 두 대 모두 keepalived·haproxy `active`, VIP는 **LB1에만**, 두 대 모두 `via 192.168.24.62`
 
 ```bash
+# lb1, lb2 각각 (root) — 재탈환 전제 점검 (service_vip 인스턴스)
+awk '/vrrp_instance service_vip/,/^}/' /etc/keepalived/keepalived.conf \
+  | grep -E 'state|priority|nopreempt|preempt_delay|virtual_router_id|weight'
+grep -nE 'vrrp_script|weight' /etc/keepalived/keepalived.conf
+```
+- 기대: lb1 `state MASTER`·`priority 110`, lb2 `state BACKUP`·`priority 100`, **`nopreempt` 없음**, `virtual_router_id 24` 같음, `track_script` weight 적용 시에도 lb1(110→80)·lb2(100) 관계 확인
+- `nopreempt`가 있으면 LB1 start 후에도 VIP가 LB2에 남음 → 4.4 기대값을 "VIP LB2 유지"로 바꾸고, 원상 복귀는 시연 후 별도 판단 (자동 재탈환을 전제로 한 측정 생략)
+
+```bash
 # Infra VM (root) — 현재 VIP 주인 MAC 기록
 ip neigh show 192.168.24.100 dev ens161
 ```
@@ -55,24 +64,39 @@ cd ~/neuroplan-aws-migration && pwd \
 && echo "DR_NLB_DNS=${DR_NLB_DNS:?terraform output 실패 → 중단}" \
 && bash scripts/probe_1006.sh run 300
 ```
-- k6: T5에서 시작한 측정을 그대로 유지 (app이 DR을 가리키는 중이므로 로그인·조회·저장 전체가 DR 경로)
+- k6: T7 전용으로 새로 실행 (P2 부록이라 T5 측정이 살아 있다는 보장 없음). 연속성 검증 = `LOGIN_MODE=session` (#56)
+```bash
+# 측정 PC — app이 DR(온프렘, 승격 후 쓰기 가능)을 가리키는 상태
+read -rp 'TEST_EMAILS (정현 테스트 계정, 쉼표 구분): ' TEST_EMAILS
+read -rsp 'TEST_PASSWORD: ' TEST_PASSWORD; echo; export TEST_PASSWORD
+K6_CSV_TIME_FORMAT=rfc3339_nano k6 run \
+  -e BASE_URL=https://app.neuroplan.cloud -e TEST_EMAILS="$TEST_EMAILS" \
+  -e LOGIN_MODE=session -e DNS_TTL=5s -e DURATION=10m \
+  --out csv=k6_t7_$(date +%m%d-%H%M).csv scripts/k6_rto_1007.js
+unset TEST_PASSWORD
+```
 
 ```bash
 # Infra VM (root) — VIP 주인 MAC 1초 기록 (별도 창)
 while :; do
-  printf '%s %s\n' "$(date +%T.%3N)" "$(ip neigh show 192.168.24.100 dev ens161 | awk '{print $3, $NF}')"
+  printf '%s %s\n' "$(date +%T.%3N)" "$(ip neigh show 192.168.24.100 dev ens161 \
+    | awk '{ mac = "-"; for (i = 1; i <= NF; i++) if ($i == "lladdr") mac = $(i + 1); print mac, $NF }')"
   sleep 1
 done | tee ~/t7_arp_$(date +%m%d-%H%M).log
 ```
 
 ### 4.2 주입 (T_inject)
 ```bash
-# lb1 (root) — 호스트 가드
-if [[ "$(hostname -s)" == lb1 ]]; then
+# lb1 (root) — 호스트 + VIP 상태 가드 (LB1에만 VIP, LB2에는 없음)
+me="$(hostname -s)"
+v1="$(ip -4 addr show ens192 | grep -c '192\.168\.24\.100/')"
+v2="$(ssh -o ConnectTimeout=5 root@192.168.14.12 "ip -4 addr show ens192 | grep -c '192\.168\.24\.100/' || true" || echo ERR)"
+echo "host=$me lb1_vip=$v1 lb2_vip=$v2"
+if [[ "$me" == lb1 && "$v1" == 1 && "$v2" == 0 ]]; then
   echo "T_inject $(date '+%F %T.%3N %z')" | tee -a ~/t7_t0.log
   systemctl stop keepalived
 else
-  echo "⚠ lb1 아님($(hostname -s)) → 중단"
+  echo "⚠ 주입 조건 아님 (lb1에 VIP 1·lb2에 VIP 0이어야 함) → 중단"
 fi
 ```
 
@@ -90,10 +114,20 @@ fi
 
 ### 4.4 복구 측정 (LB1 복귀 = 두 번째 전환)
 ```bash
-# lb1 (root)
-[[ "$(hostname -s)" == lb1 ]] && { echo "T_restore $(date '+%F %T.%3N %z')" | tee -a ~/t7_t0.log; systemctl start keepalived; }
+# lb1 (root) — 호스트 + VIP 상태 가드 (LB2에만 VIP, LB1에는 없음)
+me="$(hostname -s)"
+v1="$(ip -4 addr show ens192 | grep -c '192\.168\.24\.100/')"
+v2="$(ssh -o ConnectTimeout=5 root@192.168.14.12 "ip -4 addr show ens192 | grep -c '192\.168\.24\.100/' || true" || echo ERR)"
+echo "host=$me lb1_vip=$v1 lb2_vip=$v2"
+if [[ "$me" == lb1 && "$v1" == 0 && "$v2" == 1 ]]; then
+  echo "T_restore $(date '+%F %T.%3N %z')" | tee -a ~/t7_t0.log
+  systemctl start keepalived
+else
+  echo "⚠ 복구 조건 아님 (lb2에 VIP 1·lb1에 VIP 0이어야 함) → 실행 안 함, 4.6 판단"
+fi
 ```
-- 기대: LB1이 priority 110으로 preempt → VIP 재탈환 (1차 약 4초), ARP MAC이 LB1로 복귀
+- 기대: LB1이 priority 110으로 preempt → VIP 재탈환 (1차 약 4초), ARP MAC이 LB1로 복귀 (`nopreempt` 없음 전제, 3장)
+- 가드: LB2에 VIP 1·LB1에 VIP 0이 아니면 start하지 않음 (잘못된 상태에서 split-brain 방지)
 - 복구 중 끊김도 4.1 로그·probe로 같은 방식으로 기록
 
 ### 4.5 원상 확인
@@ -103,7 +137,14 @@ hostname -s; systemctl is-active keepalived haproxy; ip -4 addr show ens192 | gr
 ```
 - 기대: lb1 `1`, lb2 `0`, 모두 `active`
 
-### 4.6 측정 종료·요약
+### 4.6 가드에 걸렸을 때 (수동 판단)
+| 상태 | 판단 |
+|---|---|
+| VIP 양쪽 모두 없음 | lb2 `journalctl -u keepalived` 확인 → lb1 `systemctl start keepalived`로 VIP 회복 (DR 경로 중단 상태이므로 우선 복구) |
+| VIP 양쪽 모두 있음 (split-brain) | lb1 keepalived가 이미 내려가 있으면 lb2만 유지, lb1이 살아 있으면 lb1 `systemctl stop keepalived` → 한쪽만 남긴 뒤 4.5 |
+| ssh 실패 (`ERR`) | lb2 콘솔에서 직접 `ip -4 addr show ens192` 확인 후 같은 기준 |
+
+### 4.7 측정 종료·요약
 ```bash
 # DevOps VM (heejae) — probe Ctrl+C 후
 cd ~/neuroplan-aws-migration && pwd
@@ -113,7 +154,11 @@ bash scripts/probe_1006.sh summary "$CSV" "$T0"
 awk -F, 'NR>1 { if ($11 != "200") { c++; if (c > m) { m = c; e = $1 } } else c = 0 }
          END { printf "dr 최대 연속 실패: %d초 (마지막 실패 %s)\n", m, (m ? e : "-") }' "$CSV"
 ```
-- 기록: 주입·복구 각각의 VIP 이동 시각, ARP MAC 변경 시각, `dr` 최대 연속 실패, k6 실패 수
+```bash
+# 측정 PC — k6 Ctrl+C 후 (연속성 모드, 실패 허용 0)
+python3 scripts/k6_rto_summary_1007.py "$(ls -t k6_t7_*.csv | head -1)" --t0 "2026-10-16 15:10:05" --mode continuity
+```
+- 기록: 주입·복구 각각의 VIP 이동 시각, ARP MAC 변경 시각, `dr` 최대 연속 실패, k6 실패 수·PASS 여부
 
 ## 5. 범위 밖
 - K8s API VIP(`192.168.34.100`)도 같은 keepalived로 함께 이동하지만 DR 사용자 경로와 무관 → 기록만
