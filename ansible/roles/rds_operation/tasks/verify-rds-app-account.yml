@@ -22,43 +22,78 @@
 - name: Verify static RDS application account has CRUD-only grants and can read
   ansible.builtin.shell: |
     set -euo pipefail
+    umask 077
+    workdir="$(mktemp -d "${TMPDIR:-/tmp}/rds-app-account.XXXXXX")"
+    cleanup() {
+      rm -f "$workdir/master.cnf" "$workdir/app.cnf"
+      rmdir "$workdir"
+    }
+    trap cleanup EXIT
+
+    cat > "$workdir/master.cnf" <<'EOF'
+    [client]
+    protocol=tcp
+    host={{ rds_operation_endpoint }}
+    port={{ rds_operation_port }}
+    user={{ rds_operation_master_secret.username }}
+    password={{ rds_operation_master_secret.password | to_json }}
+    EOF
+    cat > "$workdir/app.cnf" <<'EOF'
+    [client]
+    protocol=tcp
+    host={{ rds_operation_endpoint }}
+    port={{ rds_operation_port }}
+    user={{ rds_operation_app_username }}
+    password={{ rds_operation_app_password | to_json }}
+    EOF
+    chmod 600 "$workdir/master.cnf" "$workdir/app.cnf"
+
     {% for host in rds_operation_app_hosts %}
-    account="'{{ rds_operation_app_username }}'@'{{ host }}'"
-    expected_crud="GRANT SELECT, INSERT, UPDATE, DELETE ON `{{ rds_operation_database }}`.* TO $account"
-    grants="$(mariadb --protocol=tcp --batch --skip-column-names \
-      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
-      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
-      --execute "SHOW GRANTS FOR $account;")"
+    account_display="`{{ rds_operation_app_username }}`@`{{ host }}`"
+    expected_usage="GRANT USAGE ON *.* TO $account_display"
+    expected_crud="GRANT SELECT, INSERT, UPDATE, DELETE ON `{{ rds_operation_database }}`.* TO $account_display"
+
+    is_allowed_grant() {
+      local grant="$1"
+      [[ "$grant" == "$expected_usage"* ]] || [[ "$grant" == "$expected_crud" ]]
+    }
+
+    # MariaDB SHOW GRANTS 형식(backtick으로 quoting된 user, host, database)을
+    # 실제 검사에 쓰는 같은 matcher로 확인한다.
+    is_allowed_grant "$expected_usage"
+    is_allowed_grant "$expected_crud"
+    if is_allowed_grant "GRANT ALL PRIVILEGES ON `{{ rds_operation_database }}`.* TO $account_display"; then
+      echo "grant matcher accepted an excessive privilege" >&2
+      exit 1
+    fi
+
+    grants="$(mariadb --defaults-extra-file="$workdir/master.cnf" --batch --skip-column-names \
+      --execute "SHOW GRANTS FOR '{{ rds_operation_app_username }}'@'{{ host }}';")"
 
     usage_seen=false
     crud_seen=false
     while IFS= read -r grant; do
-      if [[ "$grant" == "GRANT USAGE ON *.* TO $account"* ]]; then
+      if [[ "$grant" == "$expected_usage"* ]]; then
         usage_seen=true
       elif [[ "$grant" == "$expected_crud" ]]; then
         crud_seen=true
       else
-        echo "unexpected grant for $account" >&2
+        echo "unexpected grant for $account_display" >&2
         exit 1
       fi
     done <<<"$grants"
 
     [[ "$usage_seen" == true && "$crud_seen" == true ]] || {
-      echo "required CRUD grants are missing for $account" >&2
+      echo "required CRUD grants are missing for $account_display" >&2
       exit 1
     }
 
-    mariadb --protocol=tcp --batch --skip-column-names \
-      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
-      --user="{{ rds_operation_app_username }}" --password="$RDS_OPERATION_APP_PASSWORD" \
+    mariadb --defaults-extra-file="$workdir/app.cnf" --batch --skip-column-names \
       --database="{{ rds_operation_database }}" \
       --execute "SELECT CURRENT_USER(), DATABASE(), 1;" >/dev/null
     {% endfor %}
   args:
     executable: /bin/bash
-  environment:
-    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
-    RDS_OPERATION_APP_PASSWORD: "{{ rds_operation_app_password }}"
   changed_when: false
   no_log: true
 
