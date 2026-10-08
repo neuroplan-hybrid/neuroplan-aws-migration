@@ -27,6 +27,7 @@
 | T_unhealthy | HC Unhealthy 관측 시각 (보조) | 희재 |
 | T_dns | 권한 DNS가 onprem 응답 시작 (probe) | 희재 |
 | T_user | k6 로그인·조회·저장 30초 연속 성공 시작 | 희재 |
+| T_first_fail | k6에서 Fence 활성화·롤아웃에 따른 **최초 사용자 요청 실패가 관측된 시각** (실패 단계·코드 함께 기록, 예: 로그인 503) | 희재 |
 | T_write_resume | 온프렘 사용자 쓰기 재개 (6번 조건 충족) | 정현 |
 
 | 지표 | 계산 | 성격 |
@@ -35,7 +36,10 @@
 | 쓰기 차단 반영 지연 | T_sync → T0 | 보조 (Sync·롤아웃 시간) |
 | **Control RTO** | T_inject → T_dns | 주 지표 |
 | **User RTO** | T_inject → T_user | 주 지표 |
-| 사용자 영향 구간 | T0 → T_user | 보조 (Fence로 로그인·쓰기 실패는 T0부터 시작 → 발표 시 User RTO와 함께 표기, #81) |
+| 쓰기 차단 검증 후 복구까지 | T0 → T_user | 보조 (T0 = 롤아웃 완료 후 503 확인 시각이라, 롤아웃 중 먼저 시작된 실패는 포함하지 않음) |
+| **관측된 사용자 영향 구간** | T_first_fail → T_user | 보조 (k6 표본 기준. 측정 시작 시각·표본 간격을 함께 기록하고, 표본 사이·측정 시작 전 영향은 알 수 없음으로 표기, #82) |
+
+- Control RTO(T_inject → T_dns)·User RTO(T_inject → T_user)는 **#68 정의 그대로** 주 지표. T_first_fail 기반 값은 보조 지표로만 쓴다
 | Route 53 전파 시간 | T_unhealthy → T_dns | 보조 |
 
 ## 2. 왜 전환되는가 (발표 설명용)
@@ -139,7 +143,7 @@ K6_CSV_TIME_FORMAT=rfc3339_nano k6 run \
 unset TEST_PASSWORD
 ```
 - `DNS_TTL=5s`: k6 내부 DNS 캐시가 전환을 늦추지 않게 (기본 60s)
-- 1~4번 동안(쓰기 차단 중) k6는 iter 모드라 **매 반복 로그인부터 503** → 예상된 실패. User RTO는 T_inject 이후만 계산하고, T0부터의 실패는 "사용자 영향 구간"(1.1)으로 따로 기록
+- 1~4번 동안(쓰기 차단 중) k6는 iter 모드라 **매 반복 로그인부터 503** → 예상된 실패. User RTO는 T_inject 이후만 계산하고, Fence 롤아웃 중 처음 관측된 실패 시각(T_first_fail)부터는 "관측된 사용자 영향 구간"(1.1)으로 따로 기록
 
 ```bash
 # Infra VM (root) — HC 체커별 상태·CheckedTime 1초 기록 (별도 창, T_unhealthy 보조 지표·증적)
@@ -169,7 +173,7 @@ done
 
 - 희재 할 일: 1번 T0를 `~/t5_times.log`에 기록 (정현 공유 시각), probe·k6 동작 확인 / 4번 완료 공유를 받은 뒤에만 5번 진행
 - **중단 (#68)**: T0 후 5분 안에 GTID 불일치 / IO·SQL ≠ Yes / Lag ≠ 0 → 3번 승격·5번 주입 **진행 안 함** → **5.1 승격 전 원복** (쓰기 차단이 걸려 있으므로 RDS Writer 유지만으로는 사용자 쓰기가 계속 막힘)
-- 1~4번 동안 k6 실패(로그인 503부터)는 쓰기 차단에 따른 예상된 실패 (User RTO는 T_inject 이후만 계산, 사용자 영향 구간은 T0부터)
+- 1~4번 동안 k6 실패(로그인 503부터)는 쓰기 차단에 따른 예상된 실패 (User RTO는 T_inject 이후만 계산, 관측된 사용자 영향 구간은 T_first_fail부터)
 - 1번 확인 시 "로그인 정상"을 기대하지 않음 — Fence 구현이 로그인도 막음 (#74·app #6). 로그인 503은 정상 동작
 
 ### 5. ROSA routing health 실패 주입 (희재) · T_inject
@@ -221,7 +225,20 @@ bash scripts/probe_1006.sh summary "$CSV" "$TI"      # → Control RTO (T_inject
 # 측정 PC — k6 Ctrl+C 후
 python3 scripts/k6_rto_summary_1007.py "$(ls -t k6_*.csv | head -1)" --t0 "2026-10-16 15:20:03" --mode rto   # → User RTO
 ```
-- 기록: 1.1의 시각 전부, Control·User RTO, 데이터 전환 시간·쓰기 차단 반영 지연(정현), Route 53 전파 시간(보조), HC 체커 로그 전환 구간
+```bash
+# 측정 PC — T_first_fail (k6 step_ok 표본 기준: 측정 시작, 최초 실패 시각·단계·코드, 그 전까지 최대 표본 간격)
+K6CSV="$(ls -t k6_*.csv | head -1)"
+awk -F, 'NR==1 { for (i = 1; i <= NF; i++) c[$i] = i; next }
+  $c["metric_name"] == "step_ok" {
+    t = $c["timestamp"]; split(substr(t, 12, 12), h, ":"); s = h[1]*3600 + h[2]*60 + h[3]
+    if (!start) start = t
+    if (last != "" && s - last > gap) gap = s - last
+    last = s
+    if ($c["metric_value"] == 0) { printf "측정 시작 %s\nT_first_fail %s (%s)\n최초 실패 전 최대 표본 간격 %.2f초\n", start, t, $c["extra_tags"], gap; exit }
+  }' "$K6CSV"
+```
+- `extra_tags`의 `step`(login·state·save)·`code`(예: 503)를 그대로 기록. T_first_fail이 T_sync보다 이르면 Fence와 무관한 실패일 수 있으므로 원인 확인 후 기록
+- 기록: 1.1의 시각 전부(T_first_fail 포함, 측정 시작 시각·표본 간격), Control·User RTO, 관측된 사용자 영향 구간, 데이터 전환 시간·쓰기 차단 반영 지연(정현), Route 53 전파 시간(보조), HC 체커 로그 전환 구간
 
 ## 5. 중단·원복 (단계별)
 
