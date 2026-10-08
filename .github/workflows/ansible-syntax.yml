@@ -1,0 +1,42 @@
+name: Ansible syntax
+
+on:
+  pull_request:
+    paths:
+      - "ansible/**"
+      - ".github/workflows/ansible-syntax.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "ansible/**"
+      - ".github/workflows/ansible-syntax.yml"
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Ansible and required collections
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "ansible-core==2.14.18"
+          ansible-galaxy collection install             -r ansible/requirements.yml             -p ansible/collections
+
+      - name: Prepare example local configuration
+        run: |
+          cp ansible/inventory/rds-operation.ini.example             ansible/inventory/rds-operation.ini
+          cp ansible/group_vars/rds_operation.yml.example             ansible/group_vars/rds_operation.yml
+
+      - name: Syntax-check RDS operation playbooks
+        working-directory: ansible
+        run: |
+          ansible-playbook -i inventory/rds-operation.ini             playbooks/rds-operation.yml --syntax-check
+          ansible-playbook -i inventory/rds-operation.ini             playbooks/rds-cutover.yml --syntax-check
+          ansible-playbook -i inventory/rds-operation.ini             playbooks/rds-dr-promote.yml --syntax-check
+          ansible-playbook -i inventory/rds-operation.ini             playbooks/rds-initial-sync.yml --syntax-check

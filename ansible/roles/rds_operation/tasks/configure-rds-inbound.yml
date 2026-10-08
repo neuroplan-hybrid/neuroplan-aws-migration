@@ -4,14 +4,110 @@
   ansible.builtin.assert:
     that:
       - rds_operation_execute_mutations | bool
+      - rds_operation_inbound_source_host | default('') | length > 0
       - rds_operation_inbound_gtid_position is match('^[0-9]+-[0-9]+-[0-9]+$')
       - rds_operation_inbound_repl_password | length >= 32
       - rds_operation_inbound_repl_password is match('^[A-Za-z0-9]+$')
-    fail_msg: "configure-rds-inbound에는 dump와 정확히 일치하는 GTID와 Vault 제공 복제 비밀번호가 필요합니다."
+    fail_msg: "configure-rds-inbound에는 inventory Source·dump와 정확히 일치하는 GTID·Vault 제공 복제 비밀번호가 필요합니다."
   no_log: true
 
 - name: Load RDS Master credentials
   ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Read existing RDS inbound replication status
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp --vertical \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "CALL mysql.rds_show_slave_status;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  register: rds_operation_existing_inbound_status
+  changed_when: false
+  failed_when: rds_operation_existing_inbound_status.rc != 0
+  no_log: true
+
+- name: Require explicit reset approval for an existing RDS inbound replica
+  ansible.builtin.assert:
+    that:
+      - rds_operation_allow_reset_replica | bool
+    fail_msg: >-
+      RDS inbound replication이 이미 구성되어 있습니다.
+      동일 initial-sync를 재개하려면 상태를 검토한 뒤
+      rds_operation_allow_reset_replica=true를 명시하세요.
+  when: rds_operation_existing_inbound_status.stdout is search('Master_Host:\\s+\\S+')
+  changed_when: false
+
+- name: Stop approved existing RDS inbound replication before reading GTID
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "CALL mysql.rds_stop_replication;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  when:
+    - rds_operation_existing_inbound_status.stdout is search('Master_Host:\\s+\\S+')
+    - rds_operation_allow_reset_replica | bool
+  no_log: true
+
+- name: Read current RDS applied GTID after approved inbound stop
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp --batch --skip-column-names \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "SELECT @@GLOBAL.gtid_slave_pos;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  register: rds_operation_existing_inbound_gtid
+  changed_when: false
+  no_log: true
+  when:
+    - rds_operation_existing_inbound_status.stdout is search('Master_Host:\\s+\\S+')
+    - rds_operation_allow_reset_replica | bool
+
+- name: Require a single current RDS applied GTID before inbound reset
+  ansible.builtin.assert:
+    that:
+      - rds_operation_existing_inbound_gtid.stdout | trim is match('^[0-9]+-[0-9]+-[0-9]+$')
+    fail_msg: >-
+      기존 RDS inbound replication의 현재 gtid_slave_pos가 단일 GTID 형식이 아닙니다.
+      marker GTID로 재설정하지 않고 중단합니다.
+  when:
+    - rds_operation_existing_inbound_status.stdout is search('Master_Host:\\s+\\S+')
+    - rds_operation_allow_reset_replica | bool
+  changed_when: false
+  no_log: true
+
+- name: Use current RDS applied GTID for approved inbound reset
+  ansible.builtin.set_fact:
+    rds_operation_inbound_gtid_position: "{{ rds_operation_existing_inbound_gtid.stdout | trim }}"
+  when:
+    - rds_operation_existing_inbound_status.stdout is search('Master_Host:\\s+\\S+')
+    - rds_operation_allow_reset_replica | bool
+  changed_when: false
+  no_log: true
+
+- name: Reset approved existing RDS inbound replication after GTID capture
+  ansible.builtin.shell: |
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "CALL mysql.rds_reset_external_master;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+  when:
+    - rds_operation_existing_inbound_status.stdout is search('Master_Host:\\s+\\S+')
+    - rds_operation_allow_reset_replica | bool
+  no_log: true
 
 - name: Configure RDS as GTID replica of On-Prem primary
   ansible.builtin.shell: |

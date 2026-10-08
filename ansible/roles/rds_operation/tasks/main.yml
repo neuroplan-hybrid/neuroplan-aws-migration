@@ -70,6 +70,13 @@
     - rds_operation_run_mode == "rds-source"
   tags: [rds-source]
 
+- name: Resolve On-Prem Source from inventory for RDS inbound replication
+  ansible.builtin.import_tasks: resolve-inbound-source.yml
+  when:
+    - rds_operation_node_role == "controller"
+    - rds_operation_run_mode in ["seed", "configure-rds-inbound"]
+  tags: [seed, configure-rds-inbound]
+
 - name: Import approved initial logical backup into RDS
   ansible.builtin.import_tasks: seed.yml
   when:

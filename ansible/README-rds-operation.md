@@ -16,6 +16,12 @@ DB 내용·복제 역할만 다룬다. VPC, VPN, Route Table, Security Group, Ma
 - Import·복제 구성 등 DB를 바꾸는 일반 실행은 `-e rds_operation_execute_mutations=true`가 필요하다.
 - 초기 동기화는 `db-primary`의 NFS 백업에서 최신 정상 gzip·SHA-256 검증 파일을 선택하고,
   같은 덤프 헤더의 GTID를 자동 추출한다.
+- RDS에 이미 Import된 DB가 있으면 덤프를 다시 Import하지 않는다. marker의 RDS·DB·On-Prem
+  Source identity가 현재 대상과 일치할 때만 복제 구성부터 재개한다.
+- 최초 동기화는 dump marker GTID를 사용한다. 이미 inbound replication이 있는 RDS를 명시적으로
+  reset해 재개할 때는 RDS의 현재 적용 GTID부터 다시 연결한다.
+- marker는 Controller의 임시 경로에 둔다. marker가 유실된 상태에서 DB가 남아 있으면 자동 재개하지
+  않고 중단하므로, 상태를 수동 검증한 뒤 조치해야 한다.
 - Cutover는 앱 쓰기 차단과 기술 검증을 마친 뒤
   `-e rds_operation_cutover_approved=true` 하나로 실행한다.
 - DR 승격 대상은 `db-primary`로 고정하며, 실제 쓰기 전환은
@@ -37,9 +43,11 @@ chmod 600 group_vars/rds_operation.yml
 Playbook은 실행 시 AWS API로 현재 RDS Endpoint·Port·Master Secret ARN을 자동 조회한다.
 DevOps VM에는 `rds:DescribeDBInstances`, `secretsmanager:GetSecretValue` 권한을 가진 AWS 인증이 필요하다.
 
-On-Prem `db-primary`의 백업 스크립트는 `mariadb-dump --master-data=2`로 생성되어야 한다.
-이 옵션은 dump 헤더에 주석 형태의 `gtid_slave_pos`를 기록하며, Ansible은 그 값을 실행하지 않고
-RDS external replication 시작 위치로만 사용한다.
+On-Prem `db-primary`의 백업 스크립트는 InnoDB 일관성 덤프를 위해
+`mariadb-dump --single-transaction --master-data=2`로 생성되어야 한다.
+`--master-data=2`는 dump 헤더에 주석 형태의 `gtid_slave_pos`를 기록하며, Ansible은
+그 값을 실행하지 않고 RDS external replication 시작 위치로만 사용한다.
+초기 동기화의 GTID parser는 현재 단일 MariaDB domain 형식(`1-1-2782`)만 지원한다.
 
 ## 실행 단계
 
@@ -57,6 +65,9 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-initial-sync.yml \
   -e rds_operation_execute_mutations=true \
   -e rds_operation_inbound_repl_password='<Vault 또는 CI Secret>'
+
+# 기존 RDS inbound replica를 명시적으로 재설정해 initial-sync를 재개할 때만 추가
+# -e rds_operation_allow_reset_replica=true
 
 # 3. Cutover: 앱 쓰기 차단·RDS catch-up을 확인한 뒤 단일 승인 플래그로 실행
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-cutover.yml \

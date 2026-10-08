@@ -46,3 +46,16 @@
     rds_operation_run_mode: verify-rds-inbound
   roles:
     - role: rds_operation
+
+- name: Remove fetched logical backup after successful initial-sync verification
+  hosts: rds_controller
+  gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
+  tasks:
+    - name: Remove controller staging dump only after replication verification
+      ansible.builtin.file:
+        path: "{{ rds_operation_seed_sql_gz }}"
+        state: absent
+      when: rds_operation_seed_sql_gz | default('') | length > 0
+      no_log: true

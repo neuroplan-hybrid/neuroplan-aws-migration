@@ -12,28 +12,27 @@
     backup_dir={{ rds_operation_backup_directory | quote }}
     database={{ rds_operation_database | quote }}
 
-    candidates="$( 
-      find "$backup_dir" -maxdepth 1 -type f \
-        -name "$database"'_*.sql.gz' \
-        -printf '%T@ %p\n' \
-        | sort -nr \
-        | cut -d' ' -f2-
-    )"
-
     while IFS= read -r candidate; do
       [[ -n "$candidate" && -s "$candidate" && -s "$candidate.sha256" ]] || continue
       sha256sum -c "$candidate.sha256" >/dev/null 2>&1 || continue
       gzip -t "$candidate" || continue
 
-      gtid="$( 
+      gtid="$(
         gzip -cd "$candidate" \
-          | sed -nE "s/^-- SET GLOBAL gtid_slave_pos='([0-9]+-[0-9]+-[0-9]+)';$/\1/p"
+          | sed -nE "s/^-- SET GLOBAL gtid_slave_pos='([0-9]+-[0-9]+-[0-9]+)';$/\\1/p"
       )"
       [[ "$(printf '%s\n' "$gtid" | sed '/^$/d' | wc -l)" -eq 1 ]] || continue
 
-      printf '%s\t%s\n' "$candidate" "$gtid"
+      checksum="$(sha256sum "$candidate" | awk '{print $1}')"
+      printf '%s\t%s\t%s\n' "$candidate" "$checksum" "$gtid"
       exit 0
-    done <<< "$candidates"
+    done < <(
+      find "$backup_dir" -maxdepth 1 -type f \
+        -name "$database"'_*.sql.gz' \
+        -printf '%T@ %p\n' \
+        | sort -nr \
+        | cut -d' ' -f2-
+    )
 
     echo "No valid logical backup with checksum and GTID metadata was found." >&2
     exit 1
@@ -47,14 +46,15 @@
 - name: Require selected backup metadata to be unambiguous
   ansible.builtin.assert:
     that:
-      - rds_operation_seed_discovery.stdout is match('^.+\.sql\.gz\t[0-9]+-[0-9]+-[0-9]+$')
-    fail_msg: "선택된 논리백업의 경로 또는 GTID 메타데이터 형식이 올바르지 않습니다."
+      - rds_operation_seed_discovery.stdout is match('^.+\\.sql\\.gz\\t[0-9a-f]{64}\\t[0-9]+-[0-9]+-[0-9]+$')
+    fail_msg: "선택된 논리백업의 경로·SHA-256·GTID 메타데이터 형식이 올바르지 않습니다."
   changed_when: false
 
-- name: Save selected backup path and GTID
+- name: Save selected backup path checksum and GTID
   ansible.builtin.set_fact:
-    rds_operation_seed_sql_gz_onprem: "{{ rds_operation_seed_discovery.stdout.split('\t', 1)[0] }}"
-    rds_operation_inbound_gtid_position: "{{ rds_operation_seed_discovery.stdout.split('\t', 1)[1] }}"
+    rds_operation_seed_sql_gz_onprem: "{{ rds_operation_seed_discovery.stdout.split('\\t')[0] }}"
+    rds_operation_seed_sha256: "{{ rds_operation_seed_discovery.stdout.split('\\t')[1] }}"
+    rds_operation_inbound_gtid_position: "{{ rds_operation_seed_discovery.stdout.split('\\t')[2] }}"
   changed_when: false
 
 - name: Create controller staging directory for selected backup
@@ -78,6 +78,21 @@
       {{ rds_operation_seed_staging_directory }}/{{ rds_operation_seed_sql_gz_onprem | basename }}
   changed_when: false
 
+- name: Calculate fetched backup SHA-256 on controller
+  ansible.builtin.stat:
+    path: "{{ rds_operation_seed_sql_gz }}"
+    checksum_algorithm: sha256
+  register: rds_operation_fetched_seed
+  changed_when: false
+
+- name: Require fetched backup SHA-256 to match the selected On-Prem file
+  ansible.builtin.assert:
+    that:
+      - rds_operation_fetched_seed.stat.exists
+      - rds_operation_fetched_seed.stat.checksum == rds_operation_seed_sha256
+    fail_msg: "Controller에 가져온 논리백업 SHA-256이 On-Prem에서 검증한 파일과 다릅니다."
+  changed_when: false
+
 - name: Recheck fetched logical backup before RDS import
   ansible.builtin.command:
     argv:
@@ -90,4 +105,5 @@
   ansible.builtin.debug:
     msg: >-
       Selected backup {{ rds_operation_seed_sql_gz_onprem | basename }}
-      with GTID {{ rds_operation_inbound_gtid_position }}.
+      with SHA-256 {{ rds_operation_seed_sha256 }}
+      and GTID {{ rds_operation_inbound_gtid_position }}.
