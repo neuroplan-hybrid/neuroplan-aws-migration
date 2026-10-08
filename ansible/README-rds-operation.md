@@ -90,6 +90,16 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
 # 검증이 끝나면 GitOps에서 ROSA Backend의 DB_URL과 DB_USERNAME/DB_PASSWORD Secret을
 # RDS Endpoint와 ir_app 계정으로 바꾼 뒤 rollout 및 로그인·조회·쓰기를 확인한다.
 
+정적 앱 계정 Playbook은 각 `rds_operation_app_hosts`에 대해 기존 직접 권한과
+`GRANT OPTION`을 먼저 제거한 뒤 `infraready.*`의
+`SELECT, INSERT, UPDATE, DELETE`만 다시 부여한다.
+따라서 재실행해도 `ir_app`의 권한 범위가 CRUD-only로 수렴한다.
+
+`verify-rds-app-account` 모드는 Master 계정으로 `SHOW GRANTS`를 확인해
+`USAGE ON *.*`와 위 CRUD 권한 외의 추가 권한이 있으면 실패한다.
+그 뒤 `ir_app`으로 실제 인증·읽기 접속을 확인한다. 실제 애플리케이션 쓰기 동작은
+ROSA Backend rollout 후 로그인·조회·저장 smoke test에서 확인한다.
+
 # 5. 운영 토폴로지: RDS → db-primary, db-replica
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=configure-onprem-replica \
