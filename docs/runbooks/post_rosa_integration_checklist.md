@@ -7,7 +7,7 @@
 
 ## 1. 범위와 진행 조건
 
-- 사전 구축 완료 여부(Listener/HTTPRoute)는 [On-Prem HTTPS 사전 구축 가이드](onprem_https_preflight.md)에서 확인한다.
+- 사전 구축 완료 여부(Listener/HTTPRoute)는 [On-Prem HTTPS 사전 구축 가이드](onprem_https_preflight_1009.md)에서 확인한다.
 - ROSA가 준비된 뒤 확인할 핵심은 **운영 이미지·Write Fence 동작**, **양쪽 트래픽 경로**, **DB 복제·승격 게이트**, **Route 53/HC 전환**, **실제 Control/User RTO 및 데이터 정합성**이다.
 - **ROSA 구축 자체와 On-Prem HTTPS 사전 준비는 병행 가능**하지만, 최종 T5 DR 전환·복구 시연은 모든 필수 게이트를 충족한 후 별도 승인된 일정에 진행한다.
 - T7 인증서 CA 전환은 [T7 전용 런북](cert_ca_switch_continuity_1008.md)의 A/B 범위로 별도 판정한다. ROSA 구축 완료가 T7 On-Prem 인증서 테스트의 직접적인 선행 조건은 아니다.
@@ -87,7 +87,7 @@ kubectl -n neuroplan get deploy neuroplan-backend -o jsonpath='{.spec.template.s
 | Backend | 비인증 `/api/learning/state` → HTTP 401, `ssl_verify=0` | 미검증 |
 | 기존 경로 | `app.nplan.local` 및 `dr-health` 영향 없음 | 미검증 |
 
-실제 DNS는 바꾸지 않고 `curl --resolve`로 On-Prem VIP를 직접 지정해 검증한다. 상세 명령 및 순서는 [사전 구축 가이드](onprem_https_preflight.md)와 [PR #79](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/79)의 `verify-route`를 따른다.
+실제 DNS는 바꾸지 않는다. **cp1(root)의 `verify`/`verify-route`는 NGF NodePort (`VERIFY_IP=192.168.34.41`, `VERIFY_PORT=30443`) 직접 경로로 확인**하고, **Infra VM에서는 `curl --resolve`로 VIP `192.168.24.100:443`을 지정해 HAProxy/VIP 경유 HTTPS를 별도로 검증**한다. 상세 순서와 검증 기준은 [사전 구축 가이드](onprem_https_preflight_1009.md) 및 [PR #79 스크립트](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/79)를 따른다.
 
 ## 5. T5 DR 전환 통합 검증 게이트
 
