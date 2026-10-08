@@ -1,4 +1,4 @@
-# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008)
+# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r1: #70 리뷰 반영)
 
 > 담당 **희재(네트워크·측정) + 정현(데이터)** · P0·핵심 · 시연 10/16 · 리전 ap-northeast-2 (Route 53은 글로벌)
 > 기준: #53(순서), #55(확정표), **#68(단계별 담당·주입 방식·RTO 기준 합의)**, 런북 형식은 T4(#67)
@@ -63,11 +63,23 @@ app.neuroplan.cloud  Weighted A(Alias) 2개
 ### 3.1 HC·DNS 사전 확인
 ```bash
 # DevOps VM (heejae), AWS CLI — Route 53은 글로벌
+# ① 측정용 값을 환경 파일로 저장 (이후 모든 터미널에서 source ~/t5_env.sh)
 cd ~/neuroplan-aws-migration/envs/prod && pwd \
 && HC_ROSA="$(terraform output -json route53_health_check_ids | jq -r .primary)" \
 && HC_DR="$(terraform output -json route53_health_check_ids | jq -r .dr)" \
-&& echo "HC_ROSA=${HC_ROSA:?없음} HC_DR=${HC_DR:?없음}" \
-&& for h in "$HC_ROSA" "$HC_DR"; do
+&& DR_NLB_DNS="$(terraform output -raw dr_nlb_dns_name)" \
+&& ROSA_LB_DNS="$(sed -nE 's/^primary_lb_dns_name *= *"([^"]+)".*/\1/p' operation.tfvars)" \
+&& printf 'export HC_ROSA=%q\nexport HC_DR=%q\nexport DR_NLB_DNS=%q\nexport ROSA_LB_DNS=%q\n' \
+     "${HC_ROSA:?없음}" "${HC_DR:?없음}" "${DR_NLB_DNS:?없음}" "${ROSA_LB_DNS:?없음}" > ~/t5_env.sh \
+&& chmod 600 ~/t5_env.sh && cat ~/t5_env.sh
+```
+- `HC_ROSA`·`HC_DR`·`DR_NLB_DNS`·`ROSA_LB_DNS` 4개가 모두 값이 있어야 파일 생성 (하나라도 비면 중단). `ROSA_LB_DNS`는 10/13 tfvars PR로 `operation.tfvars`에 들어간 `primary_lb_dns_name` 값
+- 이후 4장 명령은 **터미널마다 `source ~/t5_env.sh`로 시작** (새 터미널에서 변수가 비는 문제 방지)
+
+```bash
+# ② HC·DNS 상태 확인
+source ~/t5_env.sh \
+&& for h in "${HC_ROSA:?}" "${HC_DR:?}"; do
      aws route53 get-health-check --health-check-id "$h" --query 'HealthCheck.HealthCheckConfig.[FullyQualifiedDomainName,ResourcePath,Inverted]' --output text
      aws route53 get-health-check-status --health-check-id "$h" --query 'HealthCheckObservations[].StatusReport.Status' --output text | tr '\t' '\n' | cut -c1-30 | sort | uniq -c
    done
@@ -80,13 +92,10 @@ dig +short app.neuroplan.cloud @"$(dig +short NS neuroplan.cloud @8.8.8.8 | head
 ### 0. 측정 시작 (희재, T0 5분 전)
 ```bash
 # DevOps VM (heejae) — probe: 권한 DNS 사이트 + 양쪽 routing health 1초
-cd ~/neuroplan-aws-migration && pwd \
-&& export DR_NLB_DNS="$(cd envs/prod && terraform output -raw dr_nlb_dns_name 2>/dev/null)" \
-&& export ROSA_LB_DNS="$(sed -nE 's/^primary_lb_dns_name *= *"([^"]+)".*/\1/p' envs/prod/operation.tfvars)" \
+source ~/t5_env.sh && cd ~/neuroplan-aws-migration && pwd \
 && echo "DR=${DR_NLB_DNS:?} ROSA=${ROSA_LB_DNS:?}" \
 && bash scripts/probe_1006.sh run 1800
 ```
-- ROSA LB DNS는 10/13 tfvars PR로 `operation.tfvars`에 들어간 `primary_lb_dns_name` 값을 그대로 읽음 (`null`이면 비어서 중단)
 
 ```bash
 # 측정 PC — k6 User RTO (iter 모드 = 매 반복 로그인·조회·저장)
@@ -102,16 +111,20 @@ unset TEST_PASSWORD
 - 1~4번 동안(쓰기 차단 중) k6 저장 실패는 **예상된 실패** → User RTO는 T_inject 이후만 계산
 
 ```bash
-# DevOps VM (heejae) — HC 체커 상태 1초 기록 (별도 창, T_unhealthy 보조 지표)
+# DevOps VM (heejae) — HC 체커별 상태·CheckedTime 1초 기록 (별도 창, T_unhealthy 보조 지표·증적)
+source ~/t5_env.sh && : "${HC_ROSA:?}"
+LOG=~/t5_hc_$(date +%m%d-%H%M).tsv
+printf 'local_time\tregion\tchecked_time\tstatus\n' > "$LOG"
 while :; do
-  printf '%s ' "$(date +%T.%3N)"
-  aws route53 get-health-check-status --health-check-id "$HC_ROSA" \
-    --query 'HealthCheckObservations[].StatusReport.Status' --output text \
-    | tr '\t' '\n' | cut -c1-7 | sort | uniq -c | tr '\n' ' '
-  echo
+  now="$(date +%T.%3N)"
+  out="$(aws route53 get-health-check-status --health-check-id "$HC_ROSA" \
+        --query 'HealthCheckObservations[].[Region,StatusReport.CheckedTime,StatusReport.Status]' --output text 2>&1)"
+  awk -v t="$now" -F'\t' 'NF >= 3 { print t "\t" $1 "\t" $2 "\t" substr($3, 1, 60) }' <<< "$out" >> "$LOG"   # 체커별 원본 (증적)
+  printf '%s %s\n' "$now" "$(awk -F'\t' 'NF >= 3 { print substr($3, 1, 7) }' <<< "$out" | sort | uniq -c | tr -s ' \n' ' ')"   # 화면 요약
   sleep 1
-done | tee ~/t5_hc_$(date +%m%d-%H%M).log
+done
 ```
+- 증적 파일: 체커(Region)별 **AWS `CheckedTime`**과 상태를 로컬 시각과 함께 저장 (#68) → T_unhealthy는 로컬 시각이 아니라 체커 `CheckedTime` 기준으로 판정
 - ⚠ 리허설 확인 필요: `--inverted` 상태에서 체커별 `StatusReport`가 원래 결과(Success)를 보이는지, 뒤집힌 결과를 보이는지 → 10/13~14에 확인 후 T_unhealthy 판정 기준 확정. 확정 전까지 T_unhealthy는 CloudWatch `HealthCheckStatus`(1분 단위, us-east-1)로 보완
 
 ### 1~4. 데이터 전환 (정현, #68 확정)
@@ -130,8 +143,9 @@ done | tee ~/t5_hc_$(date +%m%d-%H%M).log
 ### 5. ROSA routing health 실패 주입 (희재) · T_inject
 ```bash
 # DevOps VM (heejae) — 4번 완료(정현 "승격 완료" 공유) 후에만
+source ~/t5_env.sh
 read -rp '정현 4번 완료 확인 (yes 입력): ' ok
-if [[ "$ok" == yes && -n "$HC_ROSA" ]]; then
+if [[ "$ok" == yes && -n "${HC_ROSA:-}" ]]; then
   echo "T_inject $(date '+%F %T.%3N %z')" | tee -a ~/t5_times.log
   aws route53 update-health-check --health-check-id "$HC_ROSA" --inverted \
     --query 'HealthCheck.HealthCheckConfig.Inverted' --output text
@@ -153,7 +167,7 @@ dig +short app.neuroplan.cloud @"$(dig +short NS neuroplan.cloud @8.8.8.8 | head
 - DR 운영 중에는 ROSA 쓰기 차단(`DEMO_WRITE_FENCE=true`) 유지
 
 ### 7. k6 복구 판정 (희재) · T_user
-- k6 출력에서 로그인·조회·저장이 연속 성공으로 돌아오는지 확인 → 30초 연속 성공 후 판정 완료 (계산은 4.9)
+- k6 출력에서 로그인·조회·저장이 연속 성공으로 돌아오는지 확인 → 30초 연속 성공 후 판정 완료 (계산은 아래 "측정 종료·요약")
 
 ### 8. ROSA 0 / DR 1 고정 (희재) · ROSA 쓰기 차단 유지
 - 3장 ②에서 승인해 둔 tfvars PR Merge (T_write_resume 이후) → 예린(지정 실행자) `operation` plan → apply
@@ -180,7 +194,7 @@ python3 scripts/k6_rto_summary_1007.py "$(ls -t k6_*.csv | head -1)" --t0 "2026-
 ## 5. 원복·정리
 - HC: 8번 apply로 `inverted=false` 원복됨. 8번을 못 하고 중단했으면 수동 원복
 ```bash
-aws route53 update-health-check --health-check-id "$HC_ROSA" --no-inverted --query 'HealthCheck.HealthCheckConfig.Inverted' --output text   # 기대: False
+source ~/t5_env.sh && aws route53 update-health-check --health-check-id "${HC_ROSA:?}" --no-inverted --query 'HealthCheck.HealthCheckConfig.Inverted' --output text   # 기대: False
 ```
 - 이후 T6(Failback)은 런북 설명만 → 실제 원복은 10/16 destroy로 대체
 
