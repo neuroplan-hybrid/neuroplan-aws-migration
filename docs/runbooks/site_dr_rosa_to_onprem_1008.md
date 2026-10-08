@@ -1,4 +1,4 @@
-# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r3: AWS CLI는 Infra VM)
+# T5 런북 — ★ Site DR: ROSA → 온프레미스 전환·데이터 정합성 (1008, r3: AWS CLI는 Infra VM root = IAM user heejae)
 
 > 담당 **희재(네트워크·측정) + 정현(데이터)** · P0·핵심 · 시연 10/16 · 리전 ap-northeast-2 (Route 53은 글로벌)
 > 기준: #53(순서), #55(확정표), **#68(단계별 담당·주입 방식·RTO 기준 합의)**, 런북 형식은 T4(#67)
@@ -62,22 +62,40 @@ app.neuroplan.cloud  Weighted A(Alias) 2개
 
 ### 3.1 측정 값 조회·HC·DNS 사전 확인
 
-> **AWS CLI 명령은 모두 Infra VM(root)에서 실행.** DevOps VM `heejae` 계정은 AWS 자격 증명·Terraform backend가 없음 (10/8 예린 확인). Infra VM heejae IAM 키에 `route53:ListHealthChecks`·`GetHealthCheckStatus`·`UpdateHealthCheck`, `elasticloadbalancing:DescribeLoadBalancers` 허용 확인 (10/8 `simulate-principal-policy`)
+> **AWS CLI 명령은 모두 Infra VM(root)에서 실행.** DevOps VM `heejae` 계정은 AWS 자격 증명·Terraform backend가 없음 (10/8 예린 확인)
+
+- **AWS CLI 실행 주체**: Infra VM 리눅스 `root` 계정의 기본 프로필(`/root/.aws`, 600) = **IAM 사용자 `heejae`** (`AWS_PROFILE` 지정 없음). 10/8 `sts get-caller-identity` → `user/heejae`, `simulate-principal-policy`로 아래 권한 allowed 확인
+  - `route53:ListHealthChecks`·`GetHealthCheck`·`GetHealthCheckStatus`·`UpdateHealthCheck`·`ListHostedZonesByName`·`ListResourceRecordSets`, `elasticloadbalancing:DescribeLoadBalancers`
+- **값 전달 경로**: DevOps VM `heejae` → `root@192.168.14.62` SSH/scp (Mgmt 대역, 비밀번호 인증, 10/7부터 스크립트 복사에 사용 — 실행시트 0.1)
+- 당일 사전 확인:
+```bash
+# Infra VM (root)
+whoami; aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/<ACCT>/'   # 기대: root / ...:user/heejae
+# DevOps VM (heejae)
+ssh -o ConnectTimeout=5 root@192.168.14.62 'whoami; hostname -s'                               # 기대: root / infra
+```
 
 ```bash
 # Infra VM (root) — ① AWS에서 직접 조회 → ~/t5_env.sh (Terraform output 불필요)
-ZID="$(aws route53 list-hosted-zones-by-name --dns-name neuroplan.cloud --query 'HostedZones[0].Id' --output text | sed 's#/hostedzone/##')"
+ZID="$(aws route53 list-hosted-zones-by-name --dns-name neuroplan.cloud --max-items 1 \
+  --query "HostedZones[?Name=='neuroplan.cloud.'].Id | [0]" --output text 2>/dev/null | sed 's#/hostedzone/##')"
+if [[ ! "$ZID" =~ ^Z[A-Z0-9]+$ ]]; then echo "⚠ Hosted Zone ID 조회 실패: '$ZID' → 중단"; ZID=""; fi
 HC_ROSA="$(aws route53 list-health-checks --query "HealthChecks[?HealthCheckConfig.FullyQualifiedDomainName=='primary-health.neuroplan.cloud'].Id | [0]" --output text)"
 HC_DR="$(aws route53 list-health-checks --query "HealthChecks[?HealthCheckConfig.FullyQualifiedDomainName=='dr-health.neuroplan.cloud'].Id | [0]" --output text)"
 DR_NLB_DNS="$(aws elbv2 describe-load-balancers --region ap-northeast-2 --names neuroplan-dr-nlb --query 'LoadBalancers[0].DNSName' --output text)"
 ROSA_LB_DNS="$(aws route53 list-resource-record-sets --hosted-zone-id "$ZID" \
   --query "ResourceRecordSets[?Name=='app.neuroplan.cloud.' && SetIdentifier=='rosa'].AliasTarget.DNSName | [0]" --output text | sed 's/\.$//')"
-ok=1; for v in HC_ROSA HC_DR DR_NLB_DNS ROSA_LB_DNS; do
+ok=1; for v in ZID HC_ROSA HC_DR DR_NLB_DNS ROSA_LB_DNS; do
   [[ -n "${!v}" && "${!v}" != None ]] || { echo "⚠ $v 없음 → 중단"; ok=0; }
 done
+[[ "$HC_ROSA" =~ ^[0-9a-f-]{36}$ && "$HC_DR" =~ ^[0-9a-f-]{36}$ ]] || { echo "⚠ HC ID 형식 이상 → 중단"; ok=0; }
+[[ "$DR_NLB_DNS" == *.elb.ap-northeast-2.amazonaws.com ]] || { echo "⚠ DR NLB DNS 형식 이상 → 중단"; ok=0; }
 if (( ok )); then
+  umask 077
   printf 'export HC_ROSA=%q\nexport HC_DR=%q\nexport DR_NLB_DNS=%q\nexport ROSA_LB_DNS=%q\n' \
-    "$HC_ROSA" "$HC_DR" "$DR_NLB_DNS" "$ROSA_LB_DNS" > ~/t5_env.sh && chmod 600 ~/t5_env.sh && cat ~/t5_env.sh
+    "$HC_ROSA" "$HC_DR" "$DR_NLB_DNS" "$ROSA_LB_DNS" > ~/t5_env.sh.tmp && mv ~/t5_env.sh.tmp ~/t5_env.sh && cat ~/t5_env.sh
+else
+  rm -f ~/t5_env.sh ~/t5_env.sh.tmp; echo "⚠ t5_env.sh 생성 안 함 (이전 값도 삭제)"
 fi
 ```
 - 4개가 모두 값이 있어야 파일 생성. HC ID는 HC 대상 FQDN(`primary-health`·`dr-health`)으로, ROSA LB DNS는 `app` Weighted 레코드(`rosa`)의 Alias 대상으로 찾음 → 10/13 Route 53 `weighted` 적용 후에만 값이 나옴

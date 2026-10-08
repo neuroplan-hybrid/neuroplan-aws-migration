@@ -67,7 +67,16 @@ cd ~/neuroplan-aws-migration && pwd \
 && echo "DR_NLB_DNS=${DR_NLB_DNS:?조회 실패 → 중단}" \
 && bash scripts/probe_1006.sh run 300
 ```
-- `dr_nlb_dns.txt`는 Infra VM(root)에서 먼저 조회: `aws elbv2 describe-load-balancers --region ap-northeast-2 --names neuroplan-dr-nlb --query 'LoadBalancers[0].DNSName' --output text | tee ~/dr_nlb_dns.txt` (DevOps VM heejae는 AWS 자격 증명 없음, T4 4.1과 같음)
+- `dr_nlb_dns.txt`는 위 probe 실행 전에 Infra VM(root)에서 먼저 조회 (DevOps VM heejae는 AWS 자격 증명 없음, 실행 주체·권한 근거는 T4 런북 4.1과 같음)
+```bash
+# Infra VM (root) — DR NLB DNS 조회, 실패·빈 값·None이면 파일을 만들지 않음
+v="$(aws elbv2 describe-load-balancers --region ap-northeast-2 --names neuroplan-dr-nlb --query 'LoadBalancers[0].DNSName' --output text 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$v" == *.elb.ap-northeast-2.amazonaws.com ]]; then
+  printf '%s\n' "$v" > ~/dr_nlb_dns.txt && cat ~/dr_nlb_dns.txt
+else
+  rm -f ~/dr_nlb_dns.txt; echo "⚠ DR NLB DNS 조회 실패 (rc=$rc): $v → 파일 생성 안 함, 중단"
+fi
+```
 - k6: T7 전용으로 새로 실행 (P2 부록이라 T5 측정이 살아 있다는 보장 없음). 연속성 검증 = `LOGIN_MODE=session` (#56)
 ```bash
 # 측정 PC — app이 DR(온프렘, 승격 후 쓰기 가능)을 가리키는 상태

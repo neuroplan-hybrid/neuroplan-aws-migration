@@ -52,8 +52,23 @@ cd ~/neuroplan-aws-migration && pwd \
 ```
 - `DR_NLB_DNS`는 고정값 대신 **AWS에서 현재 값을 조회** (NLB 교체 시 옛 DNS 측정 방지). DevOps VM `heejae`는 AWS 자격 증명·Terraform backend가 없어(10/8 예린 확인) Infra VM에서 먼저 조회:
 ```bash
-# Infra VM (root) — 위 probe 실행 전에
-aws elbv2 describe-load-balancers --region ap-northeast-2 --names neuroplan-dr-nlb --query 'LoadBalancers[0].DNSName' --output text | tee ~/dr_nlb_dns.txt
+# Infra VM (root) — DR NLB DNS 조회, 실패·빈 값·None이면 파일을 만들지 않음
+v="$(aws elbv2 describe-load-balancers --region ap-northeast-2 --names neuroplan-dr-nlb --query 'LoadBalancers[0].DNSName' --output text 2>&1)"; rc=$?
+if [[ $rc -eq 0 && "$v" == *.elb.ap-northeast-2.amazonaws.com ]]; then
+  printf '%s\n' "$v" > ~/dr_nlb_dns.txt && cat ~/dr_nlb_dns.txt
+else
+  rm -f ~/dr_nlb_dns.txt; echo "⚠ DR NLB DNS 조회 실패 (rc=$rc): $v → 파일 생성 안 함, 중단"
+fi
+```
+- **AWS CLI 실행 주체**: Infra VM 리눅스 `root` 계정의 기본 프로필(`/root/.aws`, 600) = **IAM 사용자 `heejae`** (`AWS_PROFILE` 지정 없음). 10/8 `sts get-caller-identity` → `user/heejae`, `simulate-principal-policy`로 아래 권한 allowed 확인
+  - `route53:ListHealthChecks`·`GetHealthCheck`·`GetHealthCheckStatus`·`UpdateHealthCheck`·`ListHostedZonesByName`·`ListResourceRecordSets`, `elasticloadbalancing:DescribeLoadBalancers`
+- **값 전달 경로**: DevOps VM `heejae` → `root@192.168.14.62` SSH/scp (Mgmt 대역, 비밀번호 인증, 10/7부터 스크립트 복사에 사용 — 실행시트 0.1)
+- 당일 사전 확인:
+```bash
+# Infra VM (root)
+whoami; aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/<ACCT>/'   # 기대: root / ...:user/heejae
+# DevOps VM (heejae)
+ssh -o ConnectTimeout=5 root@192.168.14.62 'whoami; hostname -s'                               # 기대: root / infra
 ```
 - `dr` 열 = DR NLB → VPN → 온프렘 `dr-health` (VPN을 반드시 지나는 경로)
 - 10/16에는 ROSA LB DNS도 넣어 `ROSA_LB_DNS=… ` 함께 기록 (ROSA 쪽은 VPN과 무관 → 대조군)
