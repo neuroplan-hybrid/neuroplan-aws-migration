@@ -113,20 +113,3 @@ output "rds_cloudwatch_alarm_names" {
   value       = try(module.data[0].cloudwatch_alarm_names, [])
 }
 
-
-# ---------- Vault / KMS ----------
-
-output "vault_kms_key_id" {
-  description = "KMS key ID for Vault auto-unseal"
-  value       = try(module.vault_kms[0].key_id, null)
-}
-
-output "vault_kms_key_arn" {
-  description = "KMS key ARN for Vault auto-unseal"
-  value       = try(module.vault_kms[0].key_arn, null)
-}
-
-output "vault_kms_alias_name" {
-  description = "KMS alias for Vault auto-unseal"
-  value       = try(module.vault_kms[0].alias_name, null)
-}

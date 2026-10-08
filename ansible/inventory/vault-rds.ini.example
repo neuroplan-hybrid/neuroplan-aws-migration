@@ -1,7 +1,0 @@
-[rds_controller]
-# 실제 운영 RDS Endpoint가 아닌 Ansible 실행 제어 노드(DevOps VM)를 지정한다.
-localhost ansible_connection=local
-
-[onprem_replicas]
-# db-primary ansible_host=192.168.44.51
-# db-replica ansible_host=192.168.44.52

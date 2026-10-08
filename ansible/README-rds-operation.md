@@ -59,12 +59,12 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml --ta
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=rds-source \
   -e rds_operation_execute_mutations=true \
-  -e rds_operation_outbound_repl_password='<Vault 또는 CI Secret>'
+  -e rds_operation_outbound_repl_password='<Ansible Vault 또는 CI Secret>'
 
 # 2. 최신 정상 NFS backup → RDS Import → 같은 dump GTID부터 On-Prem → RDS catch-up
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-initial-sync.yml \
   -e rds_operation_execute_mutations=true \
-  -e rds_operation_inbound_repl_password='<Vault 또는 CI Secret>'
+  -e rds_operation_inbound_repl_password='<Ansible Vault 또는 CI Secret>'
 
 # 기존 RDS inbound replica를 명시적으로 재설정해 initial-sync를 재개할 때만 추가
 # -e rds_operation_allow_reset_replica=true
@@ -77,7 +77,7 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-cutover.yml \
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=configure-onprem-replica \
   -e rds_operation_execute_mutations=true \
-  -e rds_operation_outbound_repl_password='<Vault 또는 CI Secret>'
+  -e rds_operation_outbound_repl_password='<Ansible Vault 또는 CI Secret>'
 
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=verify-onprem-replica

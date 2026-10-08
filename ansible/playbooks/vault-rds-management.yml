@@ -1,8 +1,0 @@
----
-- name: Prepare and verify the Vault RDS management account
-  hosts: rds_controller
-  gather_facts: false
-  vars:
-    vault_rds_node_role: controller
-  roles:
-    - role: vault_rds

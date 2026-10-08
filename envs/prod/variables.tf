@@ -108,11 +108,6 @@ variable "onprem_weight" {
   }
 }
 
-variable "enable_vault_kms" {
-  description = "Create the AWS KMS key used for Vault auto-unseal"
-  type        = bool
-  default     = false
-}
 
 # AWS
 variable "aws_region" {
