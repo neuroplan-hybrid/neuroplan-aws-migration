@@ -32,6 +32,7 @@ cat > "$W/curl" <<'M'
 #!/usr/bin/env bash
 for x in "$@"; do u="$x"; done
 case "$u" in *"/api/learning/state") printf '%s' "$MOCK_API" ;; *) printf '%s' "$MOCK_ROOT" ;; esac
+exit "${MOCK_CURL_RC:-0}"
 M
 cat > "$W/openssl" <<M
 #!/usr/bin/env bash
@@ -69,6 +70,10 @@ export MOCK_ROOT="200 0" MOCK_API="503 0";                    t "verify-route: A
 export MOCK_API="502 0";                                      t "verify-route: API 502 → 실패" 1 verify-route
 export MOCK_API="000 -";                                      t "verify-route: 전송 실패 → 실패" 1 verify-route
 export MOCK_API="401 0" MOCK_ROOT="200 19";                   t "verify-route: ssl_verify≠0 → 실패" 1 verify-route
+
+export MOCK_ROOT="200 0" MOCK_API="401 0" MOCK_CURL_RC=28;  t "verify-route: 200/401 출력 + curl exit 28 → 실패" 1 verify-route
+export MOCK_ROOT="404 0";                                     t "verify: 출력 있어도 curl exit 28 → 실패" 1 verify
+export MOCK_CURL_RC=0
 
 echo "결과: PASS ${pass} / FAIL ${fail}"
 [[ $fail -eq 0 ]]

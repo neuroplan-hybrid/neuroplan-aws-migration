@@ -109,11 +109,15 @@ phase_gateway() {
     fi
 }
 
-https_probe() {  # $1 path → "HTTP코드 ssl_verify" (전송 실패면 "000 -")
+https_probe() {  # $1 path → "HTTP코드 ssl_verify" (curl 비정상 종료·전송 실패면 "000 -")
     local r
-    r="$(curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 5 \
-        --resolve "${APP_HOST}:${VERIFY_PORT}:${VERIFY_IP}" "https://${APP_HOST}:${VERIFY_PORT}$1" 2>/dev/null)" || true
-    echo "${r:-000 -}"
+    # curl 종료 코드가 0이 아니면(타임아웃·전송 오류 등) 출력이 남아 있어도 실패값으로 본다
+    if r="$(curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 5 \
+        --resolve "${APP_HOST}:${VERIFY_PORT}:${VERIFY_IP}" "https://${APP_HOST}:${VERIFY_PORT}$1" 2>/dev/null)"; then
+        echo "${r:-000 -}"
+    else
+        echo "000 -"
+    fi
 }
 
 check_listeners() {  # 반환: 실패 수
