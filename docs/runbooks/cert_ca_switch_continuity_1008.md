@@ -1,4 +1,4 @@
-# T7 런북 — 인증서 CA 전환 무중단 검증 (1008, #77 / r1: #78 리뷰 반영)
+# T7 런북 — 인증서 CA 전환 무중단 검증 (1008, #77 / r1·r2: #78 리뷰 반영)
 
 > 담당 희재 · 부록 · 리허설·촬영 10/9~11 (ROSA 불필요) · 리전 ap-northeast-2
 > 기준: #77 (T7 변경 합의, 정현·예린 조건부 동의), 교체 절차 = 런북 `cert_ca_switch_1007.md`(#62) 4장
@@ -17,9 +17,10 @@
 | 측정 범위 | **A (기본)**: `dr-health` + `app` TLS 기록 + k6 로그인·조회·저장 / **B (A 전제 미충족 시)**: `dr-health` TLS 기록만 — 판정은 3.4 |
 | PASS (A) | ① 교체 전후 인증서 확인(2장 조건 a) 통과 ② TLS 1초 기록에서 **두 호스트 모두 새 연결마다 `ssl_verify=0`·HTTP 200 유지**, Issuer가 LE → ZeroSSL → LE로 바뀐 시각 기록 ③ k6 `session` 실패 0건 ④ 관찰 시간 동안 Secret이 원복되지 않음 ⑤ 원복 후 LE·HTTPS 정상 |
 | PASS (B) | ①·④·⑤는 A와 같음 / ② `dr-health`만 `ssl_verify=0`·HTTP 200 유지 / ③ 없음 (k6 생략) |
-| 중단 | TLS 기록에서 `ssl_verify≠0` 또는 `000`이 **5초 연속** → 즉시 4.5 원복 |
+| 중단 (수동 판단) | 창 1에 `ALERT` 줄(같은 호스트가 **5초 이상 연속 실패**)이 찍히면 **운영자가** 즉시 4.5 원복. 자동 원복은 하지 않는다 |
 
 - 결과가 나오기 전에는 "무중단 성공"으로 표현하지 않는다 (예린 #77)
+- TLS 기록은 연속 감시가 아니라 **표본 측정**이다. 실제 표본 간격(4.7에서 호스트별 최대 간격 계산) 사이의 짧은 공백은 감지할 수 없으므로, 결과는 "표본 N건(최대 간격 X초) 중 실패 0건"으로 적고 "무중단"으로 단정하지 않는다 (예린 #78 r1)
 - 발표 표현: A = "인증서 교체 중 사용자 로그인·조회·저장 연속성", **B = "dr-health HTTPS/TLS 연속성"만** (사용자 트랜잭션 무중단이라고 쓰지 않음, 예린 #78)
 
 ## 2. 사전 조건 (#77 정현·예린 조건)
@@ -103,25 +104,36 @@ getent hosts app.neuroplan.cloud      # 기대: 192.168.24.100
 
 ### 4.1 측정 시작 (주입 2분 전, 창 3개)
 
-**창 1 — TLS 1초 기록 (새 연결마다 인증서 검증)**
+**창 1 — TLS 표본 기록 (목표 약 1초 간격, 새 연결마다 인증서 검증)**
 ```bash
 # 실행 위치: Infra VM (root)
 HOSTS="app dr-health"      # B면 HOSTS="dr-health"
 LOG=~/t7_tls_$(date +%m%d-%H%M).log
+declare -A FAIL_SINCE=()
 while :; do
-  ts=$(date +%T.%3N)
+  round=$(date +%s%N)
   for h in $HOSTS; do
     p=/; [ "$h" = dr-health ] && p=/actuator/health/routing
+    ts=$(date +%T.%3N); now=$(date +%s)
     r=$(curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 3 \
           --resolve "$h.neuroplan.cloud:443:192.168.24.100" "https://$h.neuroplan.cloud$p")
     i=$(echo | timeout 3 openssl s_client -connect 192.168.24.100:443 -servername "$h.neuroplan.cloud" 2>/dev/null \
           | openssl x509 -noout -issuer 2>/dev/null | sed -n 's/.*O *= *\([^,]*\).*/\1/p')
     printf '%s %s %s %s\n' "$ts" "$h" "${r:-000 -}" "${i:--}"
+    if [[ "${r:-000 -}" == "200 0" ]]; then
+      unset "FAIL_SINCE[$h]"
+    else
+      : "${FAIL_SINCE[$h]:=$now}"
+      (( now - FAIL_SINCE[$h] >= 5 )) && printf '%s %s ALERT 연속 실패 %d초 → 4.5 원복 판단\n' "$ts" "$h" $(( now - FAIL_SINCE[$h] ))
+    fi
   done
-  sleep 1
+  left=$(( 1000000000 - ($(date +%s%N) - round) ))
+  (( left > 0 )) && sleep "$(awk -v n="$left" 'BEGIN{printf "%.3f", n/1e9}')"
 done | tee "$LOG"
 ```
-- 한 줄 = `시각 호스트 HTTP ssl_verify Issuer조직`. `curl`은 `-k` 없이 검증하므로 잘못된 인증서면 `000 …`, `ssl_verify≠0`
+- 한 줄 = `시각 호스트 HTTP ssl_verify Issuer조직`. 시각은 **호스트별 요청 시작 시각**이라, 실제 표본 간격은 로그에서 계산한다 (요청이 느리면 1초보다 길어짐, curl·openssl 각 최대 3초)
+- `curl`은 `-k` 없이 검증하므로 잘못된 인증서면 `000 …`, `ssl_verify≠0`
+- `ALERT` 줄은 알림일 뿐 자동 원복하지 않는다 (1장 중단 기준, 운영자 판단)
 - 기록에는 인증서·키 내용이 남지 않음 (Issuer 조직명만)
 
 **창 2 — [A] k6 연속성 (B면 생략)**
@@ -131,12 +143,14 @@ read -rp 'TEST_EMAILS (정현 테스트 계정): ' TEST_EMAILS
 read -rsp 'TEST_PASSWORD: ' TEST_PASSWORD; echo; export TEST_PASSWORD
 K6_CSV_TIME_FORMAT=rfc3339_nano k6 run \
   -e BASE_URL=https://app.neuroplan.cloud -e TEST_EMAILS="$TEST_EMAILS" \
-  -e LOGIN_MODE=session -e NO_REUSE=true -e DURATION=8m \
+  -e LOGIN_MODE=session -e NO_REUSE=true -e DURATION=30m \
   --out csv=k6_t7_$(date +%m%d-%H%M).csv /root/k6_rto_1007.js
 unset TEST_PASSWORD
 ```
 - `NO_REUSE=true` → 요청마다 새 TLS 연결 (기존 연결 유지로 교체가 가려지는 것 방지, 조건 e)
 - `INSECURE`는 쓰지 않음 (기본 false = 인증서 검증)
+- `DURATION=30m`은 상한이다. **4.5 원복 후 2분 관찰이 끝난 뒤 Ctrl+C로 직접 종료**한다 (주입 전 2분 + 백업 + 교체 후 3분 + 원복 후 2분 + 조작 시간을 모두 포함하도록, 예린 #78 r1). 30분 전에 원복 후 관찰이 끝나지 않으면 그 회차는 k6 판정에서 제외하고 다시 측정
+- 종료 시각(T_k6_end)을 `~/t7_t0.log`에 기록: `echo "T_k6_end $(date '+%F %T.%3N %z')" | tee -a ~/t7_t0.log`
 
 **창 3 — 작업 창** (4.2~4.5)
 
@@ -187,30 +201,53 @@ ssh root@192.168.14.31 "kubectl -n application patch secret neuroplan-cloud-onpr
 ```
 - 창 1에서 Issuer가 `Let's Encrypt`로 돌아오고 `200 0` 유지 → 2분 더 관찰 후 측정 종료
 
-### 4.6 원복 확인·정리
+### 4.6 원복 확인·정리 (모든 확인이 통과할 때만 백업 삭제)
 ```bash
-# 실행 위치: Infra VM (root)
-ssh root@192.168.14.31 "kubectl -n application get secret neuroplan-cloud-onprem-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -issuer -enddate"
-curl -s -o /dev/null -w 'dr-health %{http_code} ssl_verify=%{ssl_verify_result}\n' --max-time 10 \
-  --resolve dr-health.neuroplan.cloud:443:192.168.24.100 https://dr-health.neuroplan.cloud/actuator/health/routing
-# 확인 후 정리
-rm -f /root/certbot-neuroplan/backup/onprem-le-secret.json
-# [A]만
+# 실행 위치: Infra VM (root) — HOSTS는 4.1과 같게 (A: "app dr-health", B: "dr-health")
+HOSTS="app dr-health"
+ok=1
+crt="$(ssh root@192.168.14.31 "kubectl -n application get secret neuroplan-cloud-onprem-tls -o jsonpath='{.data.tls\.crt}'" | base64 -d)"
+iss="$(openssl x509 -noout -issuer <<<"$crt" 2>/dev/null)"
+echo "Secret: $iss"; openssl x509 -noout -enddate <<<"$crt"
+[[ "$iss" == *"Let's Encrypt"* ]] || { echo "[FAIL] Secret Issuer가 LE가 아님"; ok=0; }
+openssl x509 -noout -checkend 0 <<<"$crt" >/dev/null || { echo "[FAIL] Secret 인증서 만료"; ok=0; }
+for h in $HOSTS; do
+  p=/; [ "$h" = dr-health ] && p=/actuator/health/routing
+  r="$(curl -s -o /dev/null -w '%{http_code} %{ssl_verify_result}' --max-time 10 \
+        --resolve "$h.neuroplan.cloud:443:192.168.24.100" "https://$h.neuroplan.cloud$p")"
+  i="$(echo | timeout 10 openssl s_client -connect 192.168.24.100:443 -servername "$h.neuroplan.cloud" 2>/dev/null | openssl x509 -noout -issuer 2>/dev/null)"
+  echo "$h: $r / $i"
+  [[ "$r" == "200 0" && "$i" == *"Let's Encrypt"* ]] || { echo "[FAIL] $h 원복 확인 실패"; ok=0; }
+done
+if [[ $ok -eq 1 ]]; then
+  rm -f /root/certbot-neuroplan/backup/onprem-le-secret.json && echo "[OK] 원복 확인 완료 → LE 백업 삭제"
+else
+  echo "[STOP] 원복 확인 실패 → LE 백업 보존 (/root/certbot-neuroplan/backup/), 4.5 재실행 또는 팀 공유"
+fi
+```
+- 기대: Secret·외부 HTTPS 모두 Let's Encrypt, 만료 2027-01-04, 대상 호스트 모두 `200 0` → `[OK]`
+- `[STOP]`이면 **백업을 지우지 않는다.** 4.5를 다시 실행하거나 런북 #62 4.5대로 판단
+
+```bash
+# 실행 위치: Infra VM (root) — [A]만, 4.6 [OK] 후
 sed -i '/app.neuroplan.cloud # T7 임시/d' /etc/hosts && getent hosts app.neuroplan.cloud || echo "hosts 정리 완료"
 ```
-- 기대: Issuer Let's Encrypt, 만료 2027-01-04, `200 ssl_verify=0`
-- 백업 삭제는 **LE 원복 확인 뒤에만**
 
 ### 4.7 요약
 ```bash
 # 실행 위치: Infra VM (root) — 창 1 Ctrl+C 후
 LOG="$(ls -t ~/t7_tls_*.log | head -1)"
-awk '{n++; if ($3!="200" || $4!="0") bad++; if ($5!=prev[$2]) {print "Issuer 변경", $1, $2, prev[$2], "→", $5; prev[$2]=$5}}
+awk '$3!="ALERT" {n++; if ($3!="200" || $4!="0") bad++; iss=$5; for (k=6; k<=NF; k++) iss=iss" "$k; if (iss!=prev[$2]) {print "Issuer 변경", $1, $2, (prev[$2]=="" ? "(시작)" : prev[$2]), "→", iss; prev[$2]=iss}}
      END {printf "총 %d건, 실패(HTTP≠200 또는 ssl_verify≠0) %d건\n", n, bad}' "$LOG"
+# 호스트별 실제 표본 간격 (최대 간격 = 감지할 수 없는 공백의 상한)
+awk '$3!="ALERT" {split($1,t,":"); s=t[1]*3600+t[2]*60+t[3]; if ($2 in last) {g=s-last[$2]; if (g>mx[$2]) mx[$2]=g; sum[$2]+=g; c[$2]++} last[$2]=s}
+     END {for (h in mx) printf "%s 표본 간격: 평균 %.2f초, 최대 %.2f초\n", h, sum[h]/c[h], mx[h]}' "$LOG"
+grep -c ALERT "$LOG" || true
 # [A]만
 python3 /root/k6_rto_summary_1007.py "$(ls -t k6_t7_*.csv | head -1)" --t0 "<T_switch 시각>" --mode continuity
 ```
-- 기록: T_switch·T_restore, Issuer 변경 시각(반영 지연), TLS 실패 건수, k6 실패 수·PASS 여부
+- 기록: T_switch·T_restore·T_k6_end, Issuer 변경 시각(반영 지연), TLS 표본 수·실패 건수·**최대 표본 간격**, ALERT 수, k6 실패 수·PASS 여부
+- [A] k6 판정 전 확인: T_k6_end가 "T_restore + 2분" 이후인지 (아니면 원복 구간이 빠진 것 → 판정 제외)
 
 ## 5. 범위 밖
 - ROSA Secret 교체 (#62 4.6): 운영 중 Route 영향 위험이 있어 이번 시연에서 제외
@@ -231,4 +268,4 @@ python3 /root/k6_rto_summary_1007.py "$(ls -t k6_t7_*.csv | head -1)" --t0 "<T_s
 | | 3.4 범위 판정 | | A / B (결과 코드) |
 | | 4.3 T_switch | | 반영 지연 __초 |
 | | 4.5 T_restore | | |
-| | 4.7 요약 | | TLS 실패 __건 / k6 실패 __건 |
+| | 4.7 요약 | | TLS 표본 __건(최대 간격 __초) 실패 __건 / k6 실패 __건 |
