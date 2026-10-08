@@ -33,4 +33,4 @@ RDS가 Source가 되는 컷오버 이후에도 복제를 유지하려면 양쪽 
 - 네트워크 관련 값은 `envs/prod`가 network 모듈의 Output을 입력값으로 전달한다.
 - GTID 복제 계정 생성, Dump Import, RDS 외부 복제 시작은 Terraform 범위가 아니며 별도 Ansible Playbook 또는 DB Runbook에서 수행한다.
 - `master_user_secret_arn`은 Secret 위치만 출력한다. Secret 값은 Terraform 출력이나 Git에 기록하지 않는다.
-- CloudWatch Alarm은 `enable_cloudwatch_alarms=true`일 때만 생성한다. 이메일 수신자는 `alarm_email_endpoints`로 전달하며, Terraform Apply 후 AWS가 보내는 구독 확인 이메일을 수신자가 1회 승인해야 한다.
+- CloudWatch Alarm은 `enable_cloudwatch_alarms=true`일 때만 생성한다. Apply 후 출력된 SNS Topic ARN에 이메일 수신자를 CLI 또는 콘솔로 구독시키고, 수신자가 AWS 확인 이메일을 1회 승인한다. 이메일 구독은 승인 전 Terraform 삭제가 불완전할 수 있어 Terraform state로 관리하지 않는다.
