@@ -29,8 +29,8 @@ DB 내용·복제 역할만 다룬다. VPC, VPN, Route Table, Security Group, Ma
   ROSA Backend의 DB URL·Kubernetes Secret 전환은 GitOps의 별도 변경이다.
 - DR 승격 대상은 `db-primary`로 고정하며, 실제 쓰기 전환은
   `rds_operation_dr_writes_fenced=true`, `rds_operation_dr_promotion_approved=true`가 필요하다.
-- 비밀번호, AWS Access Key, RDS Secret 내용은 Git에 저장하지 않는다. 복제 비밀번호는
-  Ansible Vault 또는 실행 시 `-e`로만 전달한다.
+- 비밀번호, AWS Access Key, RDS Secret 내용은 Git에 저장하지 않는다. 정적 앱 계정 비밀번호는
+  Ansible Vault 암호화 변수 파일로만 전달한다.
 
 ## 설치와 설정
 
@@ -78,14 +78,19 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-cutover.yml \
 
 # 4. Cutover 뒤 ROSA Backend 전환 전에 RDS 정적 앱 계정(ir_app)을 준비·검증
 # Endpoint·Master Secret ARN은 AWS API로 자동 조회한다.
-# 비밀번호는 Git에 저장하지 않고 실행 시 전달한다.
-ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
-  -e rds_operation_execute_mutations=true \
-  -e rds_operation_app_password='<Ansible Vault 또는 CI Secret>'
+# 앱 비밀번호는 Git·명령행에 넣지 않는다. 아래 파일은 .gitignore 대상의 로컬 암호화 파일이다.
+ansible-vault create group_vars/rds_operation.vault.yml
+# 내용 예시: rds_operation_app_password: "<앱 비밀번호>"
 
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
-  -e rds_operation_run_mode=verify-rds-app-account \
-  -e rds_operation_app_password='<Ansible Vault 또는 CI Secret>'
+  --ask-vault-pass \
+  -e @group_vars/rds_operation.vault.yml \
+  -e rds_operation_execute_mutations=true
+
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
+  --ask-vault-pass \
+  -e @group_vars/rds_operation.vault.yml \
+  -e rds_operation_run_mode=verify-rds-app-account
 
 # 검증이 끝나면 GitOps에서 ROSA Backend의 DB_URL과 DB_USERNAME/DB_PASSWORD Secret을
 # RDS Endpoint와 ir_app 계정으로 바꾼 뒤 rollout 및 로그인·조회·쓰기를 확인한다.
