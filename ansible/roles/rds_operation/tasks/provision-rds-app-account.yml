@@ -21,14 +21,14 @@
 - name: Load RDS Master credentials
   ansible.builtin.import_tasks: load-master-secret.yml
 
-- name: Create or update static RDS application account with CRUD-only grants
+- name: Reset direct grants and provision the CRUD-only static RDS application account
   ansible.builtin.shell: |
     set -euo pipefail
     {% for host in rds_operation_app_hosts %}
     mariadb --protocol=tcp \
       --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
       --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
-      --execute "CREATE USER IF NOT EXISTS '{{ rds_operation_app_username }}'@'{{ host }}' IDENTIFIED BY '$RDS_OPERATION_APP_PASSWORD'; ALTER USER '{{ rds_operation_app_username }}'@'{{ host }}' IDENTIFIED BY '$RDS_OPERATION_APP_PASSWORD'; GRANT SELECT, INSERT, UPDATE, DELETE ON {{ rds_operation_database }}.* TO '{{ rds_operation_app_username }}'@'{{ host }}';"
+      --execute "CREATE USER IF NOT EXISTS '{{ rds_operation_app_username }}'@'{{ host }}' IDENTIFIED BY '$RDS_OPERATION_APP_PASSWORD'; REVOKE ALL PRIVILEGES, GRANT OPTION FROM '{{ rds_operation_app_username }}'@'{{ host }}'; ALTER USER '{{ rds_operation_app_username }}'@'{{ host }}' IDENTIFIED BY '$RDS_OPERATION_APP_PASSWORD'; GRANT SELECT, INSERT, UPDATE, DELETE ON {{ rds_operation_database }}.* TO '{{ rds_operation_app_username }}'@'{{ host }}';"
     {% endfor %}
   args:
     executable: /bin/bash
