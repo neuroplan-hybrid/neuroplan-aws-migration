@@ -185,6 +185,34 @@ variable "apply_immediately" {
   default     = false
 }
 
+variable "enable_cloudwatch_alarms" {
+  description = "RDS CloudWatch Alarm·SNS 이메일 알림을 생성할지 여부입니다. 이메일 수신자를 확정하기 전에는 false로 유지합니다."
+  type        = bool
+  default     = false
+}
+
+variable "free_storage_alarm_threshold_bytes" {
+  description = "FreeStorageSpace Alarm 임계값(Byte)입니다. 기본값은 4GiB입니다."
+  type        = number
+  default     = 4294967296
+
+  validation {
+    condition     = var.free_storage_alarm_threshold_bytes > 0
+    error_message = "free_storage_alarm_threshold_bytes는 0보다 커야 합니다."
+  }
+}
+
+variable "database_connections_alarm_threshold" {
+  description = "DatabaseConnections Alarm 임계값입니다. 인스턴스 class·max_connections에 맞춰 조정합니다."
+  type        = number
+  default     = 80
+
+  validation {
+    condition     = var.database_connections_alarm_threshold > 0
+    error_message = "database_connections_alarm_threshold는 0보다 커야 합니다."
+  }
+}
+
 variable "tags" {
   description = "추가 태그입니다."
   type        = map(string)

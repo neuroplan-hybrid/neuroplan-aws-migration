@@ -36,5 +36,9 @@ module "data" {
   auto_minor_version_upgrade = var.rds_auto_minor_version_upgrade
   apply_immediately          = var.rds_apply_immediately
 
+  enable_cloudwatch_alarms             = var.enable_rds_cloudwatch_alarms
+  free_storage_alarm_threshold_bytes   = var.rds_free_storage_alarm_threshold_bytes
+  database_connections_alarm_threshold = var.rds_database_connections_alarm_threshold
+
   tags = { Owner = "junghyun" }
 }

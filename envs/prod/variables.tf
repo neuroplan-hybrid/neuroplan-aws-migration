@@ -285,6 +285,26 @@ variable "rds_apply_immediately" {
   nullable    = true
 }
 
+# RDS CloudWatch Alarm / SNS Email
+# 이메일 구독은 Terraform으로 만들지 않으며, Apply 후 SNS Topic ARN으로 CLI 또는 콘솔에서 별도 등록·승인한다.
+variable "enable_rds_cloudwatch_alarms" {
+  description = "RDS CloudWatch Alarm·SNS Topic을 생성할지 여부"
+  type        = bool
+  default     = false
+}
+
+variable "rds_free_storage_alarm_threshold_bytes" {
+  description = "RDS FreeStorageSpace Alarm 임계값(Byte)"
+  type        = number
+  default     = 4294967296
+}
+
+variable "rds_database_connections_alarm_threshold" {
+  description = "RDS DatabaseConnections Alarm 임계값"
+  type        = number
+  default     = 80
+}
+
 # ECR
 variable "ecr_force_delete" {
   description = "Allow ECR repositories to be deleted with images during cleanup"
