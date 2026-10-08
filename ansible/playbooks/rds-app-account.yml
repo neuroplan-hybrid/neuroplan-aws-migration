@@ -1,0 +1,13 @@
+---
+# RDS Writer Cutover 뒤 ROSA Backend 전환 전에 정적 앱 계정을 준비·검증한다.
+# RDS Endpoint·Port·Master Secret ARN은 controller가 AWS API로 자동 조회한다.
+- name: Provision or verify the static RDS application account
+  hosts: rds_controller
+  gather_facts: false
+  vars_files:
+    - ../group_vars/rds_operation.yml
+  vars:
+    rds_operation_node_role: controller
+    rds_operation_run_mode: provision-rds-app-account
+  roles:
+    - role: rds_operation

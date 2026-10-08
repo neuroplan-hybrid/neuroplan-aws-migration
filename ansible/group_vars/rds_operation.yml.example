@@ -8,6 +8,13 @@ rds_operation_identifier: "neuroplan-rds-operation"
 rds_operation_database: "infraready"
 rds_operation_database_collation: "utf8mb4_uca1400_ai_ci"
 
+# Cutover 뒤 ROSA Backend가 RDS에 직접 접속할 정적 최소 권한 계정
+# 비밀번호는 Git에 저장하지 않고 Ansible Vault 또는 실행 시 -e로만 전달한다.
+rds_operation_app_username: "ir_app"
+rds_operation_app_password: ""
+rds_operation_app_hosts:
+  - "%"
+
 # 초기 동기화 시 db-primary에서 최신 정상 dump를 찾고 동일 파일의 GTID를 자동 추출한다.
 rds_operation_backup_directory: "/mnt/db-backup"
 rds_operation_seed_staging_directory: "/tmp/neuroplan-rds-operation"

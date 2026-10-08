@@ -1,0 +1,31 @@
+---
+- name: Require static RDS application account verification inputs
+  ansible.builtin.assert:
+    that:
+      - rds_operation_database is match('^[A-Za-z0-9_]+$')
+      - rds_operation_app_username is match('^[A-Za-z0-9_]+$')
+      - rds_operation_app_password | length > 0
+      - rds_operation_app_password is match('^[A-Za-z0-9]+$')
+    fail_msg: >-
+      verify-rds-app-account에는 앱 계정명과 실행 시 전달한 비밀번호가 필요합니다.
+  no_log: true
+
+- name: Verify static RDS application account can read the application database
+  ansible.builtin.shell: |
+    set -euo pipefail
+    mariadb --protocol=tcp --batch --skip-column-names \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_app_username }}" --password="$RDS_OPERATION_APP_PASSWORD" \
+      --database="{{ rds_operation_database }}" \
+      --execute "SELECT CURRENT_USER(), DATABASE(), 1;"
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_OPERATION_APP_PASSWORD: "{{ rds_operation_app_password }}"
+  register: rds_operation_app_account_verify
+  changed_when: false
+  no_log: true
+
+- name: Display static RDS application account verification result
+  ansible.builtin.debug:
+    msg: "RDS static application account read verification succeeded."

@@ -4,7 +4,8 @@
 
 ```text
 최신 정상 논리 덤프 선택 → RDS Import → On-Prem → RDS GTID 동기화
-→ 승인된 Cutover → RDS Primary → On-Prem DB 2대 Replica → 수동 DR 승격
+→ 승인된 Cutover → RDS 정적 앱 계정 준비 → ROSA Backend → RDS 전환
+→ RDS Primary → On-Prem DB 2대 Replica → 수동 DR 승격
 ```
 
 Terraform은 RDS, DB Subnet Group, Parameter Group, Secrets Manager를 만든다. 이 Ansible은
@@ -24,6 +25,8 @@ DB 내용·복제 역할만 다룬다. VPC, VPN, Route Table, Security Group, Ma
   않고 중단하므로, 상태를 수동 검증한 뒤 조치해야 한다.
 - Cutover는 앱 쓰기 차단과 기술 검증을 마친 뒤
   `-e rds_operation_cutover_approved=true` 하나로 실행한다.
+- Cutover가 끝난 뒤에만 RDS 정적 앱 계정 `ir_app`을 CRUD 권한으로 준비한다.
+  ROSA Backend의 DB URL·Kubernetes Secret 전환은 GitOps의 별도 변경이다.
 - DR 승격 대상은 `db-primary`로 고정하며, 실제 쓰기 전환은
   `rds_operation_dr_writes_fenced=true`, `rds_operation_dr_promotion_approved=true`가 필요하다.
 - 비밀번호, AWS Access Key, RDS Secret 내용은 Git에 저장하지 않는다. 복제 비밀번호는
@@ -73,7 +76,21 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-initial-sync.yml \
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-cutover.yml \
   -e rds_operation_cutover_approved=true
 
-# 4. 운영 토폴로지: RDS → db-primary, db-replica
+# 4. Cutover 뒤 ROSA Backend 전환 전에 RDS 정적 앱 계정(ir_app)을 준비·검증
+# Endpoint·Master Secret ARN은 AWS API로 자동 조회한다.
+# 비밀번호는 Git에 저장하지 않고 실행 시 전달한다.
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
+  -e rds_operation_execute_mutations=true \
+  -e rds_operation_app_password='<Ansible Vault 또는 CI Secret>'
+
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
+  -e rds_operation_run_mode=verify-rds-app-account \
+  -e rds_operation_app_password='<Ansible Vault 또는 CI Secret>'
+
+# 검증이 끝나면 GitOps에서 ROSA Backend의 DB_URL과 DB_USERNAME/DB_PASSWORD Secret을
+# RDS Endpoint와 ir_app 계정으로 바꾼 뒤 rollout 및 로그인·조회·쓰기를 확인한다.
+
+# 5. 운영 토폴로지: RDS → db-primary, db-replica
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=configure-onprem-replica \
   -e rds_operation_execute_mutations=true \
@@ -82,7 +99,7 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=verify-onprem-replica
 
-# 5. T6 DR Drill: db-primary만 수동 승격한다. MaxScale/Route는 이 Playbook이 바꾸지 않는다.
+# 6. T6 DR Drill: db-primary만 수동 승격한다. MaxScale/Route는 이 Playbook이 바꾸지 않는다.
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-dr-promote.yml \
   -e rds_operation_execute_mutations=true \
   -e rds_operation_dr_writes_fenced=true \

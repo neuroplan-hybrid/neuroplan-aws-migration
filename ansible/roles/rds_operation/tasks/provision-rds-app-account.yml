@@ -1,0 +1,38 @@
+---
+- name: Require static RDS application account inputs
+  ansible.builtin.assert:
+    that:
+      - rds_operation_execute_mutations | bool
+      - rds_operation_database is match('^[A-Za-z0-9_]+$')
+      - rds_operation_app_username is match('^[A-Za-z0-9_]+$')
+      - rds_operation_app_password | length > 0
+      - rds_operation_app_password is match('^[A-Za-z0-9]+$')
+      - rds_operation_app_hosts | length > 0
+      - >-
+        (rds_operation_app_hosts
+        | select('match', '^[A-Za-z0-9.%_-]+$')
+        | list
+        | length) == (rds_operation_app_hosts | length)
+    fail_msg: >-
+      provision-rds-app-account에는 변경 승인, 영숫자 앱 비밀번호와
+      유효한 접속 Host 패턴이 필요합니다.
+  no_log: true
+
+- name: Load RDS Master credentials
+  ansible.builtin.import_tasks: load-master-secret.yml
+
+- name: Create or update static RDS application account with CRUD-only grants
+  ansible.builtin.shell: |
+    set -euo pipefail
+    {% for host in rds_operation_app_hosts %}
+    mariadb --protocol=tcp \
+      --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
+      --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
+      --execute "CREATE USER IF NOT EXISTS '{{ rds_operation_app_username }}'@'{{ host }}' IDENTIFIED BY '$RDS_OPERATION_APP_PASSWORD'; ALTER USER '{{ rds_operation_app_username }}'@'{{ host }}' IDENTIFIED BY '$RDS_OPERATION_APP_PASSWORD'; GRANT SELECT, INSERT, UPDATE, DELETE ON {{ rds_operation_database }}.* TO '{{ rds_operation_app_username }}'@'{{ host }}';"
+    {% endfor %}
+  args:
+    executable: /bin/bash
+  environment:
+    RDS_MASTER_PASSWORD: "{{ rds_operation_master_secret.password }}"
+    RDS_OPERATION_APP_PASSWORD: "{{ rds_operation_app_password }}"
+  no_log: true
