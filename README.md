@@ -12,7 +12,8 @@ NeuroPlan 2차: 온프렘 Kubernetes → AWS/ROSA 단계적 하이브리드 마�
 .
 ├── bootstrap/
 │   ├── remote-state/   # S3 State Bucket (지정 실행자, destroy 제외)
-│   └── dns/            # Route 53 Hosted Zone (지정 실행자, destroy 제외)
+│   ├── dns/            # Route 53 Hosted Zone (지정 실행자, destroy 제외)
+│   └── jenkins-iam/    # Jenkins ECR DescribeImages (독립 State, destroy 제외)
 ├── modules/
 │   ├── network/        # 희재: VPC, 3AZ Subnet, NAT, RT, SG
 │   ├── hybrid/         # 희재: S2S VPN, CGW/VGW
@@ -22,6 +23,8 @@ NeuroPlan 2차: 온프렘 Kubernetes → AWS/ROSA 단계적 하이브리드 마�
 ├── envs/prod/          # 공통 조립 + 단계별 tfvars (PR 리뷰 필수)
 └── ansible/            # 희재 작성 / 예린 리뷰 (온프렘)
 ```
+
+Jenkins IAM 사용 권한은 ROSA 임시 리소스와 수명 주기가 다릅니다. `bootstrap/jenkins-iam/`을 별도 State로 관리하고, 기존 `jenkins-ecr` IAM 사용자에 ECR 이미지 조회 최소 권한만 부여합니다. `envs/prod`의 10/16 destroy에 포함하지 않습니다. 적용 및 On-Prem 배포 검증은 [`bootstrap/jenkins-iam/README.md`](bootstrap/jenkins-iam/README.md) 참조.
 
 ## 단계별 tfvars (`envs/prod/`)
 
