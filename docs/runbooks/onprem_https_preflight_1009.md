@@ -165,9 +165,9 @@ HTTP 000/404/502/503, 예상 밖 코드 또는 인증서 오류면 FAIL로 기�
 - [x] Gateway 서버 Dry-run 성공 (사전검증 보고)
 - [x] On-Prem Argo CD Auto-Sync ON, `main` 추적 확인
 - [x] 희재님 Gateway `--apply` **실제 적용** (2026-10-09 09:12 KST, cp1, 희재님 결과 공유)
-- [ ] Gateway `--apply` **사전 승인 기록** 확보 (승인자·승인 시각·기록 링크 미확인)
+- [x] Gateway `--apply` **적용 승인·실행 이력 확인** (#79 리뷰·Merge 이후 담당자 희재가 직접 2026-10-09 09:12 KST 적용; 희재님 PR #83 리뷰 확인). 별도 사전 승인 시각·독립 승인 문서 링크는 미확보.
 - [x] DevOps VM에서 `origin/main`의 Gateway 스크립트 SHA-256 **전체 원본 값** 확보 (2026-10-09): `d8597b5bee562267f578896529423f980a01968bfe3e62e67f83fe9b04cb001f`
-- [ ] cp1 복사본 스크립트의 **SHA-256 전체 64자리**를 원본과 대조 (희재님이 동일하다고 보고한 앞 16자리 `d8597b5bee562267`만 확인; cp1 전체 출력 대기)
+- [x] cp1 `/root/setup_onprem_app_listener_1008.sh` 복사본의 **SHA-256 전체 64자리**가 원본과 일치 (2026-10-09 12:06 KST, 희재님 PR #83 리뷰 확인): `d8597b5bee562267f578896529423f980a01968bfe3e62e67f83fe9b04cb001f`
 - [x] cp1 NGF NodePort `verify` Listener·SNI/SAN·TLS 실측 PASS (희재님 09:12 결과 공유, HTTPRoute 반영 전 `/` 404는 예상 응답)
 - [x] GitOps PR #11 Merge (`b47ea396481794644652927a4253eda6ef0ae749`)
 - [x] Argo CD `Synced/Healthy` 및 HTTPRoute 두 ParentRef `Accepted=True`·`ResolvedRefs=True` 확인 (Argo CD reconciled 09:17:15 KST, HTTPRoute cp1 09:30 재확인)
@@ -178,14 +178,14 @@ HTTP 000/404/502/503, 예상 밖 코드 또는 인증서 오류면 FAIL로 기�
 
 | 실행 일시 (KST) | 단계 | 실행 위치·담당자 | PASS/FAIL | 증적 링크/비고 |
 |---|---|---|---|---|
-| 2026-10-09 09:12 | Gateway `--apply` | cp1 / 희재 | **PASS (보고)** | `https-public-app` 신규 Listener 추가, `Accepted/Programmed/ResolvedRefs=True`; 승인 기록 별도 확인 필요 |
+| 2026-10-09 09:12 | Gateway `--apply` | cp1 / 희재 | **PASS (보고)** | `https-public-app` 신규 Listener 추가, `Accepted/Programmed/ResolvedRefs=True`; #79 리뷰·Merge 후 담당자 직접 적용, 독립 사전 승인 시각·문서 링크 미확보 |
 | 2026-10-09 09:12경 | Listener `verify` (NodePort) | cp1 / 희재 | **PASS (보고)** | `192.168.34.41:30443`, SNI/SAN 일치, Let’s Encrypt YE2, TLS 검증 0, exit 0; 당시 `/` 404는 HTTPRoute 반영 전 정상 |
 | 2026-10-09 09:17:15 | PR #11/Argo CD 반영 | GitHub·On-Prem DevOps VM / 예린 | **PASS (조회)** | [GitOps PR #11](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/11), Revision `b47ea396`, `Synced/Healthy`; 신규 hostname 및 ParentRef 수락 |
 | 2026-10-09 09:30 | HTTPRoute 조건 재확인 | cp1 / 희재 | **PASS (보고)** | `https`, `https-public-app` 모두 `Accepted=True`, `ResolvedRefs=True` |
-| 2026-10-09 (세부시각 미기록) | `verify-route` (NodePort) | cp1 / 희재 | **PASS (보고)** | `/` 200, 비인증 `/api/learning/state` 401, ssl_verify 0, exit 0 |
+| 2026-10-09 09:30 | `verify-route` (NodePort) | cp1 / 희재 | **PASS (보고)** | `/` 200, 비인증 `/api/learning/state` 401, ssl_verify 0, exit 0 |
 | 2026-10-09 09:31:04 | HTTPS 최종검증 (VIP) | Infra VM / 희재 공유 결과 | **PASS (보고)** | VIP `192.168.24.100:443`, `/` 200, 비인증 `/api/learning/state` 401, ssl_verify 0, curl_exit 0 |
 
-**범위 판정:** T5의 **온프렘 앱 HTTPS 라우팅 선행 조건** 충족, T7은 **A 범위 경로 검증 준비 완료**. 실제 T5 DR 전환·T7 CA 전환/연속성 시험 성공을 뜻하지 않으며, T7 A/B는 리허설 당일 3.4절 재확인 후 확정한다. 미체크된 승인 기록·cp1 전체 해시·원본 증적은 별도 보완한다.
+**범위 판정:** T5의 **온프렘 앱 HTTPS 라우팅 선행 조건** 충족, T7은 **A 범위 경로 검증 준비 완료**. 실제 T5 DR 전환·T7 CA 전환/연속성 시험 성공을 뜻하지 않으며, T7 A/B는 리허설 당일 3.4절 재확인 후 확정한다. 승인·적용 경위 및 cp1 전체 SHA-256 일치는 PR #83 리뷰 확인으로 반영했다. 독립 사전 승인 시각·문서 링크와 원본 실행 로그·스크린샷 보관 위치는 별도 보완한다.
 
 
 ## 8. 관련 자료
