@@ -36,30 +36,20 @@ aws iam list-user-policies --user-name jenkins-ecr --output table
   새로 덮어쓰지 말고 State/소유권을 먼저 확인한다.
 - `aws iam put-user-policy`로 콘솔·CLI에서 중복 수동 변경하지 않는다.
 
-## Terraform 확인 및 승인 후 적용
-저장소 최신 `main`에 PR을 리뷰·Merge한 뒤 **별도 승인**을 받아 지정
-실행자가 수행한다. 기존 S3 State Bucket(기본
-`neuroplan-tfstate-707191185613`)과 State 접근 권한이 있어야 한다.
-이 Bucket은 기존 `bootstrap/remote-state`에서 관리한다.
+## Terraform 적용 완료 이력 (2026-10-09)
 
-```bash
-cd bootstrap/jenkins-iam
+> **적용 완료 — 재실행 지시가 아님.** 본 PR의 IAM 정책은 PR Merge 전에 승인된 실증 과정에서 이미 Terraform Apply되었다. Merge는 소스 이력을 실제 AWS State와 일치시키며, 정책을 다시 생성하지 않는다.
 
-terraform fmt -check
-terraform init -backend-config="bucket=neuroplan-tfstate-707191185613"
-terraform validate
-terraform plan -out=jenkins-iam.tfplan
+- S3 Backend: `bootstrap/jenkins-iam/terraform.tfstate` (별도 State)
+- `terraform init`, `fmt -check`, `validate` 성공
+- Plan: **1 to add, 0 to change, 0 to destroy**
+- Apply: **1 added, 0 changed, 0 destroyed**
+- 적용 리소스: `aws_iam_user_policy.jenkins_ecr_describe_images`
+- 이후 Jenkins ECR 조회, GitOps Push, On-Prem Argo CD 배포 실증 완료 (PR #85 본문 참조)
 
-# Plan 예상: aws_iam_user_policy.jenkins_ecr_describe_images 1개 신규 생성
-# IAM 사용자 생성·삭제·교체 및 다른 환경 리소스 변경은 허용하지 않는다.
-# 리뷰/별도 승인 후에만:
-terraform apply jenkins-iam.tfplan
-```
+향후 재확인이 필요한 경우 지정 실행자가 AWS 계정·기존 State를 확인한 뒤 읽기 전용 `terraform plan`으로 드리프트 여부를 검토한다. **기존 적용 이력을 다시 재현하기 위해 `terraform apply`를 반복하지 않는다.** 예상하지 못한 변경이 보이면 중단하고 별도 승인받는다. `*.tfplan` 및 State 파일은 커밋하지 않는다.
 
-`terraform init`에서 기존 State가 발견되거나 Plan이 예상과 다르면
-진행을 중단하고 원인을 확인한다. `*.tfplan` 및 State 파일은 커밋하지 않는다.
-
-## Jenkins → GitOps → On-Prem 실측 게이트
+## Jenkins → GitOps → On-Prem 실측 게이트 (2026-10-09 완료 이력)
 
 - [ ] 적용 직후 ECR 이미지 `a4d120f` 조회를 **Jenkins의 동일 IAM 자격증명**으로 확인 (단순 정책 JSON 출력만으로 PASS 선언 금지)
 - [ ] On-Prem 서비스 이용자·담당자에게 재배포 영향을 사전 공지하고 실행 승인
@@ -81,9 +71,11 @@ terraform apply jenkins-iam.tfplan
 ROSA 환경이 10/12 이전에 없으면 ROSA 쪽 GitOps 태그만 확인한다.
 ROSA 신규 Pod 배포·MaxScale DB 연결·로그인/조회/저장은 10/12 별도 검증.
 
+**검증 기록:** Jenkins ECR 조회·Frontend/Backend 단독 SCM 자동 배포·GitOps Push·On-Prem Pod 2/2 Ready는 PR #85 본문에 실측 PASS로 기록되었다. 아래 체크리스트는 재현용 절차이며 미체크가 완료된 검증을 부정하는 것은 아니다. `dr-health` 200은 별도 외부 DR NLB IP `--resolve` 경로에서 10/9 12:19 확인되었으며, 사용자 기능의 최종 `e5d288f` 재검증은 별도 증적이 필요하다.
+
 ## 중단·회복
 - IAM Plan이 권한 1개 생성 외 변경을 보이면 중단
 - ECR 조회가 `AccessDenied`면 다른 계정/자격증명/정책 경계(SCP, permission boundary 포함)를 진단
 - Jenkins의 GitOps Push 후 On-Prem Auto-Sync가 실패하면 담당자와 복구/롤백 승인 후 진행
-- GitOps #12는 **Jenkins로 양쪽 배포 성공 확인 전 Close/Merge하지 않는다**
+- GitOps [#12](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/12)는 최신 Backend 태그 `e5d288f`가 `main`에 반영되어 **2026-10-09 Merge 없이 Close 완료**. 재병합하지 않는다.
 - **실제 Terraform Apply, Jenkins 실행, Argo CD Sync 및 클러스터 배포는 이 PR로 자동 실행되지 않는다**
