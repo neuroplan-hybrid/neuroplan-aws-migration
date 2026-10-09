@@ -2,7 +2,7 @@
 
 > **#33 최신화 제안본 (2026-10-09)** — [AWS Migration Issue #33](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/issues/33)의 일정·담당·비용 기준을 유지하면서, [Issue #76의 ROSA P0 DB·VPN·TLS 협의 결과](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/issues/76)와 GitOps #12 리뷰에서 합의된 단계적 배포를 반영한 버전 관리용 문서이다.
 > **PR Merge가 Issue #33 본문을 자동 수정하지는 않는다.** 리뷰·병합 후 #33 본문에서 본 문서로 연결하거나 최신 핵심 체크리스트를 반영한다.
-> 이 문서는 **실행 계획**이다. ROSA/Terraform Apply, Secret 전송, Jenkins 실행, Route 53 전환, DB Cutover, T5·T7 리허설은 아직 이 문서만으로 완료·승인됐다고 판단하지 않는다.
+> 이 문서는 **실행 계획과 사전 검증 증적**이다. 10/9 Jenkins → ECR → GitOps → On-Prem CI/CD는 검증 완료했지만, 10/12 ROSA/Terraform Apply, ROSA Secret 전송·실제 배포, Route 53 전환, DB Cutover, T5·T7 리허설은 별도 승인·실행·검증이 필요하다.
 
 ## 개요
 PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담당별 체크리스트입니다.
@@ -10,7 +10,7 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 
 ## 핵심 결정 (3명 합의)
 - ROSA는 **10/12에 1회 생성 → 10/16까지 5일 연속 가동**, 10/16 당일 destroy (주말 연장 없음)
-- 10/12는 생성뿐 아니라 **기존 Backend 최초 배포·Smoke Test → 조건 충족 시 Jenkins CI/CD → 동일 Smoke Test 반복**까지 진행한다. 이후 통합·전환 사전 검증 → Cutover → DR 검증·종료 순서를 유지한다.
+- **10/9 Jenkins CI/CD 사전 검증 완료**(Frontend/Backend SCM Polling 단독 자동 배포, ECR, GitOps, On-Prem). 10/12는 **GitOps `main`의 최신 Frontend·Backend 이미지로 ROSA 최초 배포 → Smoke Test**를 진행한다. 같은 Jenkins 테스트 재실행은 필수 단계가 아니며, 이후 통합·전환 사전 검증 → Cutover → DR 검증·종료 순서를 유지한다.
 
 ## 일정
 | 날짜 | 단계 | 내용 |
@@ -19,7 +19,7 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 | 10/6~10/7 | 준비 | 담당별 사전 준비 (아래 체크리스트) |
 | **10/8** | **Go/No-Go** | 이 문서 기준 판정, 10/12 실행 순서 확정 |
 | 10/9~10/11 | 학원 불가 | 문서·코드 작업만 |
-| 10/12 | Day 1 | ROSA·운영 RDS·NAT 생성, `b7deb4a` 최초 배포·Smoke Test → Jenkins CI/CD 조건부 실행·양쪽 이미지 검증, 데이터 초기 Import·GTID 복제 착수(RDS Available 이후) |
+| 10/12 | Day 1 | ROSA·운영 RDS·NAT 생성, GitOps `main` 기준 Frontend `48d7e15`·Backend `e5d288f` 최초 배포·Smoke Test, ROSA/On-Prem 이미지 확인, 데이터 초기 Import·GTID 복제 착수(RDS Available 이후) |
 | 10/13 | Day 2 | ROSA 연동/TLS·Route 53 레코드·Health Check(조건 충족 시), **T5 Fence 사전검증(별도 승인; 전체 DR 전환과 구분)** |
 | 10/14 | Day 3 | Cutover 사전 검증, 가중치 10/90 → 50/50 |
 | 10/15 | Day 4 | DB Cutover·역복제, 저녁 진행·비용 점검 |
@@ -48,9 +48,12 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 - [x] 워커 인스턴스 타입 확정 → 하루 비용 재계산 (m5.xlarge × 3)
 - [ ] (선택) 실제 앱 이미지로 OCP 확인
 - [x] Application #6 Write Fence 코드 Merge, GitOps #10 `DEMO_WRITE_FENCE: "false"` 기본값 Merge (ROSA 전용; 쓰기 차단 미활성)
-- [x] ECR `neuroplan-backend:a4d120f` 존재 확인(사용자 10/9 AWS 조회, digest `sha256:c9dfaabd54e556b874f25f3f79c03513e9363e2a915c57d31fb304949e82c70c`)
-- [x] GitOps #12 `b7deb4a → a4d120f` PR 생성·Approve (미병합; **Jenkins 배포 성공 시 중복 변경 방지를 위해 Merge하지 않고 Close할지 결정**)
-- [ ] **10/12 실제 Jenkins 변경 감지·배포, ROSA/On-Prem 실측 및 커밋 SHA 기록** (미실행)
+- [x] 10/9 Jenkins IAM `ecr:DescribeImages` 오류 복구 및 Terraform Apply 완료([AWS Migration PR #85](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/85), **현재 Draft/미병합**; 리뷰·Merge 필요)
+- [x] Jenkins 재실행 시 Backend `a4d120f` 이미지 재사용·GitOps 자동 Push·On-Prem 배포 확인. 이후 SCM 자동 감지로 Frontend `48d7e15` 단독, Backend `e5d288f` 단독 Build/Push·GitOps Push·On-Prem 배포 확인(각각 `2/2 Ready`)
+- [x] ECR 최신 이미지 확인: Frontend `48d7e15` (`sha256:a8eca0d334537dcdcbcaf67712cc60018fe8d3290fe21c3eb77c140c6bbe1971`), Backend `e5d288f` (`sha256:5a379cde7eb6906296864cac2ae1b6174ed3f952a4382019731dc87e4460afe0`)
+- [x] GitOps `main` [commit `9bbe350`](https://github.com/neuroplan-hybrid/neuroplan-gitops/commit/9bbe35025a9639c054cb9cd63f08fc7103f5df17): ROSA·On-Prem DR Overlay에 위 최신 태그 반영; On-Prem Argo CD `Synced/Healthy` 확인
+- [x] GitOps [PR #12](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/12)는 기존 ROSA Backend `b7deb4a → a4d120f` 변경 목적의 **Open/미병합** PR. 현재 `main`은 더 최신인 `e5d288f`이므로 그대로 Merge하지 않고 담당자 검토 후 별도 정리
+- [ ] **10/12 ROSA 신규 환경** 이미지 Pull·Pod Ready·MaxScale 연결·TLS·로그인/조회/저장·Fence `false` 검증 및 실측 SHA 확보 (**아직 미실행**)
 
 ### 정현 (데이터)
 - [x] NFS 논리백업본 경로·대상 DB(infraready)·Import 검증 명령 확정 (SHA-256·`gzip -t`, dump GTID 기준)
@@ -62,15 +65,24 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 ## ROSA 5일 시간표
 | 날짜 | 단계 | 내용 |
 |---|---|---|
-| 10/12 | 구축·첫 검증 | ROSA·RDS·NAT 생성, GitOps·Secret/TLS·앱 `b7deb4a` 최초 배포·Smoke Test → 승인된 Jenkins CI/CD로 Backend 버전 통일 시도·재검증; NFS Import/GTID 착수는 RDS Available 이후 데이터 담당 병행 |
+| 10/12 | 구축·첫 검증 | ROSA·RDS·NAT 생성, 최신 GitOps `main` 이미지(Frontend `48d7e15`, Backend `e5d288f`)로 최초 배포·Smoke Test, ROSA/On-Prem 이미지·Secret/TLS 확인; NFS Import/GTID 착수는 RDS Available 이후 데이터 담당 병행 |
 | 10/13 | 통합 | 10/12 결과 재확인, ROSA TLS preflight, Route 53 tfvars apply(조건 충족 시), 헬스체크, **Fence=true 503 범위 사전검증(별도 승인 및 원복, 전체 T5 DR 전환 아님)** |
 | 10/14 | 전환 사전검증 | GTID catch-up, Weighted 10/90 → 50/50 |
 | 10/15 | Cutover | DB Cutover, 역복제, 저녁 진척·비용 판단 |
 | 10/16 | DR·종료 | 장애 시연 T1~T6, RTO/RPO, 18:00 destroy 시작 |
 
-## 10/12 ROSA P0 단계적 배포·Jenkins 실행 게이트 (5-1 → 5-2)
+## 10/9 CI/CD 사전 실증 및 10/12 ROSA P0 최초 배포 게이트
 
-**합의된 변경 및 프로젝트 목표:** GitOps #12를 즉시 Merge하는 대신, 10/12 ROSA의 기존 이미지 Smoke Test 후 **Jenkins AWS CI/CD의 변경 감지 → 테스트 → ECR 이미지 검증/빌드·Push → GitOps 태그 갱신 → Argo CD 배포**가 실제로 작동하는지 검증한다. Jenkins가 실패하거나 변경을 감지하지 못하면 **원인을 분석해 파이프라인/설정 수정 PR 및 재실행으로 해결하는 것이 원칙**이며, #12를 즉시 수동 Merge해서 CI/CD 검증을 대체하지 않는다. Jenkins 검증 성공 전까지 #12는 Open으로 유지한다.
+**변경된 실행 순서:** 10/9에 Jenkins IAM 권한 문제를 해결하고 **SCM Polling → 변경 컴포넌트 Test/Build → ECR Push·조회 → GitOps `main` Push → On-Prem Argo CD 배포**를 검증했다. 따라서 **10/12 ROSA 최초 배포 때 이전 태그 `b7deb4a`/`bcc6857`로 먼저 배포하거나 Jenkins를 다시 실행해 태그를 통일할 필요가 없다.** ROSA는 최신 GitOps `main` 태그를 사용하며, ROSA 자체의 실제 배포 검증은 아직 남아 있다.
+
+### 10/9 완료: Jenkins·ECR·GitOps·On-Prem 증적 (ROSA 실증과 구분)
+
+- [x] AWS Migration [PR #85](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/85)의 Jenkins `ecr:DescribeImages` 권한 Terraform Apply 완료. 기존 실패 Job 수동 재실행 PASS(Backend `a4d120f` ECR 재사용, Maven 8/8 테스트, GitOps `eee3f3b`, On-Prem Argo CD `Synced/Healthy`). **PR #85는 여전히 Draft/미병합이므로 코드 리뷰 및 Merge 필요.**
+- [x] Frontend만 Dockerfile 주석 변경([Application `48d7e15`](https://github.com/neuroplan-hybrid/neuroplan-application/commit/48d7e159f5a9f05f63e5209f2550741ac23bb2db)): Jenkins `Started by an SCM change`, `Frontend changed=true`/`Backend changed=false`, Frontend만 Build/ECR Push, GitOps [`ee462cc`](https://github.com/neuroplan-hybrid/neuroplan-gitops/commit/ee462cc14acb7ac71a95768a774b0bdb167cf0c1) Push, On-Prem Frontend `2/2 Ready`, ECR Digest 일치.
+- [x] Backend만 Dockerfile 주석 변경([Application `e5d288f`](https://github.com/neuroplan-hybrid/neuroplan-application/commit/e5d288fa58148551c7ce7dfa923c7b5d6e90464d)): Jenkins `Started by an SCM change`, `Frontend changed=false`/`Backend changed=true`, Maven 8/8, Backend만 Build/ECR Push, GitOps [`9bbe350`](https://github.com/neuroplan-hybrid/neuroplan-gitops/commit/9bbe35025a9639c054cb9cd63f08fc7103f5df17) Push, On-Prem Backend 신규 ReplicaSet `2/2 Ready`, ECR Digest 일치.
+- [x] On-Prem Argo CD `Synced / Healthy` revision `9bbe350` 및 Frontend `48d7e15`·Backend `e5d288f` 최신 태그 확인. 테스트용 Dockerfile 주석은 검증 이력으로 보존한다.
+- [x] Infra VM에서 HTTPS `/` 200, 비인증 `/api/learning/state` 401, TLS 검증 0 및 사용자 로그인→조회→저장 확인(앞선 Backend `a4d120f` 배포 회차). **최종 `e5d288f` 배포 이후 동일 사용자 기능 재검증과 `dr-health` 200 재확인은 별도 증적 필요.**
+- **실증 범위:** SCM 스케줄 `H/2 * * * *`에 따른 자동 실행 확인(실제 Push→시작 소요 초 단위 미측정). On-Prem Pod 롤아웃 완료는 확인했지만 배포 중 요청 연속성·무중단은 미측정. **ROSA Pod·서비스는 아직 검증하지 않았다.**
 
 ### 0. 최초 배포 이전 필수 게이트 (예린·희재·정현)
 
@@ -81,46 +93,30 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 - [ ] 희재: ROSA → MaxScale TCP 4006 방화벽 `allow --apply`·`verify`와 TLS Secret `neuroplan-cloud-rosa-tls` 실제 등록/Route `externalCertificate`·Router RBAC·HTTPS 사전검증. **10/7 dry-run·인증서 발급은 실제 ROSA 적용 완료 증거가 아님**
 - [ ] `route53_routing_mode=off` 유지. Route 53 전환은 별도 TLS/Health/Plan 게이트와 승인 뒤 진행
 
-### 5-1. 기존 이미지로 ROSA 최초 Smoke Test (예린)
+### 5-1. 10/12 최신 GitOps 이미지로 ROSA 최초 Smoke Test (예린)
 
-- [ ] ROSA Backend **`b7deb4a`**, Frontend **`bcc6857`** GitOps `main` 기준으로 최초 배포(ROSA Fence ConfigMap 기본값은 `false`)
-- [ ] ECR Pull, Frontend·Backend Pod/Deployment Ready, Route·Service·TLS 확인
-- [ ] **ROSA Pod 관점** MaxScale `192.168.44.21:4006` TCP 연결 및 기존 `ir_app` 인증·조회 성공; 사용자 **로그인 → 조회 → 저장** 성공
-- [ ] MaxScale에 기록된 실제 ROSA Source IP를 희재님과 공유(예상 IP를 실측값으로 기록하지 않음)
-- [ ] 첫 Smoke Test PASS 시각·Pod 이미지 태그/다이제스트·증적 저장. **실패하면 Jenkins·#12 Merge를 진행하지 않고 원인부터 분리**
+- [ ] 실행 직전 `neuroplan-gitops/main`의 `overlays/rosa/kustomization.yaml` 최신 Revision 확인. **2026-10-09 확인 기준** Frontend `48d7e15` / Backend `e5d288f`, GitOps `9bbe350`. 그 사이 자동 배포로 태그가 바뀌었다면 팀 공유·ECR Digest 재검증·승인을 거쳐 **실제 최신값**으로 계획 업데이트
+- [ ] ECR에 두 이미지 존재 확인. 기준 Digest — Frontend `sha256:a8eca0d334537dcdcbcaf67712cc60018fe8d3290fe21c3eb77c140c6bbe1971`, Backend `sha256:5a379cde7eb6906296864cac2ae1b6174ed3f952a4382019731dc87e4460afe0`
+- [ ] ROSA 최초 배포에 `overlays/rosa` 적용; `DEMO_WRITE_FENCE=false` 기본 상태 유지(쓰기 차단 미활성)
+- [ ] ECR Pull, Frontend·Backend Deployment/Pod Ready, Argo CD `Synced/Healthy`, Route·Service·TLS 확인. 실제 ROSA Pod `imageID` Digest와 ECR 일치
+- [ ] **ROSA Pod 관점** MaxScale `192.168.44.21:4006` TCP 연결 및 기존 `ir_app` 인증·조회 성공; 사용자 **로그인 → 조회 → 저장** 정상 및 `DEMO_WRITE_FENCE=false` 쓰기 허용 검증
+- [ ] MaxScale에 기록된 **실제** ROSA Source IP를 희재님과 공유(예상 IP를 실측값으로 기록하지 않음)
+- [ ] Smoke Test PASS 시각, GitOps/Application SHA, Pod 태그·Digest 및 TLS/DB/서비스 증적 저장. **실패 시 Jenkins를 무조건 재실행하거나 GitOps #12를 수동 Merge하지 말고** Pull/Secret/Router/DB/권한 등 원인을 먼저 분석
 
-### 5-2. Jenkins AWS CI/CD로 버전 통일 (합의된 우선 경로)
+### 5-2. 10/12 ROSA 실측·On-Prem 교차 검증 및 변경 발생 시 CI/CD 관리
 
-**실행 전 Gate — 예린, 희재 및 팀 승인**
+- [ ] **ROSA 예린:** 최초 ROSA 배포와 Argo CD Sync·Pod Ready, 로그인/조회/저장·Fence `false` 확인 뒤 #33/실행시트에 결과와 SHA 기록
+- [ ] **On-Prem 희재:** 최신 이미지 버전·Argo CD `Synced/Healthy` 상태 확인. `ecr-pull-secret` 갱신 게이트 준수 및 `dr-health` 200, Infra VM VIP HTTPS `/` 200, 비인증 `/api/learning/state` 401, TLS `ssl_verify_result=0`·기능 Smoke Test 재검증
+- [ ] **양쪽 실제 배포 버전**을 비교. ROSA에서 정상 이미지 Pull·Pod Ready가 검증된 이후에만 'ROSA/On-Prem 동일 버전'으로 기록. k6 기준선·T1/T2도 ROSA 실측 후 수행
+- [ ] Jenkins 사전 CI/CD 실증은 10/9 완료했으므로 **10/12 검증을 위해 기능 영향 없는 테스트 커밋이나 Build Now 재실행을 강제하지 않음**. 10/12 이후 실제 코드 변경이 생기면 SCM Polling이 `main`을 감지하여 GitOps `main` Push와 On-Prem 자동 롤아웃까지 유발할 수 있으므로 **팀에 변경 영향·작업 시각·복구 계획 사전 공유 후 승인** 필요
+- [ ] 장애가 나면 Jenkins 콘솔(변경 감지/빌드/ECR 권한/이미지 존재 판단/GitOps Push) 및 ROSA·On-Prem Argo CD·Secret·Pod 이벤트를 구분 진단. 기존 ECR Immutable 태그를 덮어쓰거나 GitOps를 Force Push하지 않으며, 변경 필요 시 별도 코드/설정 PR 리뷰 후 재검증
+- [ ] Jenkins 빌드 번호, Application/GitOps SHA, ECR 태그·Digest, 두 환경 실측 결과를 연결해 증적을 보관. **On-Prem 성공만으로 ROSA 성공 또는 무중단 배포를 주장하지 않음**
 
-- [ ] On-Prem VM 기동 후 **`ecr-pull-secret` 갱신 Job 성공**, Secret·Backend·Frontend Pod 상태 확인(기존 #33 A+B 게이트)
-- [ ] Jenkins 사용 Job이 실제 `Jenkinsfile.aws`를 참조하는지 확인. 이전 성공 빌드의 커밋·현재 Application `HEAD`·Backend 경로 변경분을 **읽기 전용으로 비교**해 `BACKEND_CHANGED=true` 예상 여부 확인
-- [ ] 예정 이미지 태그/이미 ECR에 존재하는 태그·GitOps `main` 최신 Revision 확인. `a4d120f` 등 기존 태그가 ECR에 있으면 **Build/Push 생략은 정상적인 이미지 재사용**이며 GitOps 갱신은 진행 가능하나, **실제 Backend 빌드·ECR Push 성공 증적을 대체하지는 못한다**. `BACKEND_CHANGED=false`면 무의미한 커밋으로 강제하지 않고 아래 Jenkins 원인 분석·보완 절차 적용
-- [ ] **GitOps `main` 직접 Push → On-Prem DR Argo CD Auto-Sync/Pod 재배포 가능**을 팀 채널에 사전 공지하고 담당자·작업 시각·롤백 방안 합의 및 실행 승인 확보
-- [ ] ROSA Argo CD Auto-Sync 및 대상 경로 `overlays/rosa` 확인. 현재 서비스 사용 중인 환경·테스트 계정/쓰기 영향 점검
+**기존 GitOps PR #12 처리**
 
-**승인 후 Jenkins 실행 및 결과 확인**
-
-- [ ] `BACKEND_CHANGED=true`가 확인된 승인 회차에 Jenkins 실행. 실제 단계별 `Test Backend`·ECR 이미지 존재 조회·(필요 시) 빌드/Push·GitOps `rosa`/`onprem-dr` 이미지 태그 변경·GitOps `main` Push 성공 확인
-- [ ] Jenkins Job/빌드 번호, Application SHA, ECR 태그·다이제스트, GitOps 새 커밋 SHA를 기록. **Jenkins 실행 자체만으로 이미지 통일 성공 선언 금지**
-- [ ] **ROSA 예린:** Argo CD Sync·Backend 전체 롤아웃·Pod Ready 확인 후 5-1과 동일 Smoke Test 반복. `DEMO_WRITE_FENCE=false` 상태에서 **로그인·조회·저장 정상 및 쓰기 허용** 확인
-- [ ] **On-Prem 희재:** Argo CD Sync·Backend Pod Ready, `dr-health` HTTP 200, Infra VM VIP 직접 HTTPS `/` 200, 비인증 `/api/learning/state` 401, TLS `ssl_verify_result=0` 재검증
-- [ ] **양쪽 실제 실행 이미지 태그·다이제스트** 확인하여 버전 일치 여부 기록. ROSA/On-Prem 검증 PASS 후 k6 기준선·T1/T2는 **새 이미지** 기준 측정
-
-**Jenkins 실패 시 원인 분석 → 수정 → 재실행 (CI/CD 검증 필수)**
-
-- [ ] **변경 감지 실패(`BACKEND_CHANGED=false`):** 이전 성공 빌드 SHA·현재 Application HEAD·Git diff 대상 경로 및 Jenkins Job의 SCM/브랜치 설정을 대조한다. 실제 Backend 변경이 없으면 이것은 정상적인 Skip이므로 **허위 변경 커밋으로 강제하지 않는다**. 기존 ECR 이미지 재배포가 필요하면 승인된 별도 코드 PR에서 *기존 태그 배포(Deploy-only) 옵션* 및 안전장치를 설계·검증한 뒤 Jenkins로 재실행한다. 코드 변경이 실제 있었는데도 감지 실패했다면 감지 로직을 수정·테스트한다.
-- [ ] **빌드·단위 테스트 실패:** Jenkins 콘솔/테스트 리포트에서 원인을 분석하고 Application·Jenkinsfile의 필요한 수정은 **별도 PR로 리뷰·검증 후** 반영한다. 다시 Jenkins를 실행해 테스트·빌드 성공을 확인한다.
-- [ ] **ECR 인증/Push·GitOps Push 실패:** AWS/ECR 권한, 기존 immutable tag·digest, GitOps 저장소 접근 권한, Push 충돌·브랜치 상태를 진단하고 해당 설정/스크립트를 승인된 방법으로 수정한 뒤 재실행한다. 임의로 ECR 태그를 덮어쓰거나 GitOps `main`을 수동 강제 Push하지 않는다.
-- [ ] **Argo CD 롤아웃·On-Prem 회귀 실패:** 신규 배포 중단, 두 환경의 이전 정상 이미지/Secret·Pod 상태 확인, 희재님과 승인된 복구 절차 협의. 원인을 고친 후 양쪽 Smoke Test를 다시 통과해야 한다.
-- [ ] 모든 실패 회차에 **Jenkins Job·빌드 번호, Application/GitOps SHA, 실패 Stage·콘솔 로그(비밀정보 제거), 수정 PR, 재실행 번호, 최종 PASS**를 기록한다. 원인 수정이 확인되지 않은 무조건 재시도는 지양한다.
-- [ ] **전체 CI/CD 검증 범위:** 기존 `a4d120f`를 재사용해 Build/Push가 Skip되었다면 *배포 자동화만 검증된 것*으로 기록한다. 프로젝트의 **빌드 → 테스트 → ECR Push → GitOps 갱신 → Argo CD 적용** 전체 증적은 이후 승인된 실제 Backend 변경 커밋(신규 ECR immutable 태그)에 대한 Jenkins 실행으로 별도 확인한다. 기존 ECR 이미지가 있었다는 이유만으로 전체 빌드·Push 검증 완료 표시 금지.
-
-**#12 종료 기준 및 일정 보호**
-
-- [ ] Jenkins를 통해 **양쪽 이미지 태그/다이제스트 갱신과 ROSA·On-Prem 서비스 재검증이 실제 PASS**하고 #12가 중복 변경임을 확인한 다음에만 **#12 Merge 없이 Close**(별도 승인 후 수행). 실패·중단 상태에서는 Open 유지.
-- [ ] Jenkins가 당일 해결되지 않으면 **실패 원인·수정 PR·재검증 일정**을 Issue/실행시트에 기록하고 Jenkins를 계속 검증한다. **#12 수동 Merge는 자동화 성공을 대체하지 않으며**, T5 준비 일정상 서비스 배포가 꼭 필요한 비상시에 한해 별도 팀 승인으로 추진할 수 있다. 이 경우 *수동 배포 성공*과 *Jenkins CI/CD 미검증*을 명확히 분리 기록한다.
-- [ ] 늦어도 **10/13 T5 Fence 사전 리허설 전**에는 ROSA의 Fence 포함 이미지 배포·`false` 정상 쓰기 검증을 목표로 하되, 미충족이면 **리허설을 보류·일정 재협의**한다. 검증이 안 된 상태에서 DR·DB 승격을 강행하지 않는다.
+- [ ] [GitOps #12](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/12)는 이전 최초 배포용 Backend `b7deb4a → a4d120f` 변경 PR. **GitOps `main`에는 이미 더 최신인 `e5d288f`가 반영됐으므로 그대로 Merge하지 않는다.** 팀 검토 후 중복·구버전 PR을 Merge 없이 Close할지 별도 승인받아 결정한다. PR 생성/유지만으로 ROSA 배포 완료로 판단하지 않음
+- [ ] GitOps #12 정리는 Jenkins 사전 실증 완료 이력과 구분하고, **10/12 ROSA 최초 배포의 승인·Smoke Test 조건을 대체하지 않음**
+- [ ] 늦어도 **10/13 T5 Fence 사전 리허설 전** ROSA Fence 포함 최신 Backend의 `false` 쓰기 정상 검증 목표. 미충족이면 리허설 보류·일정 재협의. 검증 없는 DR·DB 승격은 수행하지 않음
 
 ### 10/13 T5 사전검증 범위 주의
 
@@ -210,6 +206,6 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 
 ## 관련 및 리뷰 반영
 - AWS Migration: #22, #28, #32, **#33**, #47~#50, #52, #55, #56~#62, **#76**(DB/VPN/TLS), **#75**(Cutover 후 RDS 계정 PR), **#77·PR #78**(T7 CA), **#79·#80**(On-Prem HTTPS), **#81·PR #82**(T5 Fence 런북)
-- GitOps: **#6**(On-Prem IfNotPresent), **#10**(ROSA Fence 기본 `false`, Merged), **#11**(On-Prem HTTPS HTTPRoute, Merged), **#12**(Backend 태그 변경, Approved/Open·Jenkins 결과에 따라 판단)
+- GitOps: **#6**(On-Prem IfNotPresent), **#10**(ROSA Fence 기본 `false`, Merged), **#11**(On-Prem HTTPS HTTPRoute, Merged), **#12**(이전 Backend `a4d120f` 지정, Open/미병합·현재 최신 `e5d288f`로 대체되어 리뷰 후 정리)
 - Application: **#6**(Fence 구현, Merged), **#7**(RDS Secret 갱신 중 JWT 유지, Merged)
 - 실행 가이드: 10/12 ROSA P0 구축 실행 가이드(기준일 10/8); 본 문서는 #33 일정·담당·Gate의 버전 관리본이며 해당 가이드 및 T5/T7 런북을 대체하지 않음
