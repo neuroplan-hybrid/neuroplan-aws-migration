@@ -1,6 +1,6 @@
 # ROSA 가동 일정·10/12 P0 구축 및 Jenkins CI/CD 실행 체크리스트
 
-> **#33 최신화 제안본 (2026-10-09)** — [AWS Migration Issue #33](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/issues/33)의 일정·담당·비용 기준을 유지하면서, [10/12 ROSA P0 실행 가이드](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/issues/76)와 GitOps #12 리뷰에서 합의된 단계적 배포를 반영한 버전 관리용 문서이다.
+> **#33 최신화 제안본 (2026-10-09)** — [AWS Migration Issue #33](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/issues/33)의 일정·담당·비용 기준을 유지하면서, [Issue #76의 ROSA P0 DB·VPN·TLS 협의 결과](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/issues/76)와 GitOps #12 리뷰에서 합의된 단계적 배포를 반영한 버전 관리용 문서이다.
 > **PR Merge가 Issue #33 본문을 자동 수정하지는 않는다.** 리뷰·병합 후 #33 본문에서 본 문서로 연결하거나 최신 핵심 체크리스트를 반영한다.
 > 이 문서는 **실행 계획**이다. ROSA/Terraform Apply, Secret 전송, Jenkins 실행, Route 53 전환, DB Cutover, T5·T7 리허설은 아직 이 문서만으로 완료·승인됐다고 판단하지 않는다.
 
