@@ -155,29 +155,38 @@ HTTP 000/404/502/503, 예상 밖 코드 또는 인증서 오류면 FAIL로 기�
 - **T5**: ROSA·DB·Write Fence 등 통합 선행 조건이 준비된 뒤 별도 런북으로 수행.
 - **T7**: 기존 [CA 전환 런북](cert_ca_switch_continuity_1008.md)의 A/B 범위 판정에 따라 실시. B 결과를 사용자 서비스 연속성 성공으로 표현하지 않는다.
 
-## 7. 체크리스트 / 기록 (미수행 항목은 체크하지 않음)
+## 7. 체크리스트 / 기록 (2026-10-09 결과 반영)
+
+> **증적 수준 구분:** GitOps PR #11 병합 및 Argo CD/HTTPRoute 결과는 GitHub 기록·DevOps VM 조회 출력으로 확인했다. cp1 Gateway/NodePort 및 Infra VM VIP 결과는 **희재님이 공유한 실행 결과를 근거로 PASS 기록**한 것이며, 해당 호스트 원본 실행 로그/스크린샷을 별도로 수집·재실행한 것은 아니다. 상세 기록: [GitOps #11 최종 PASS 댓글](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/11#issuecomment-6071829571).
 
 - [x] PR #79 병합 (2026-10-08 확인)
-- [x] TLS Secret 타입·SAN 확인 (2026-10-08 조회)
+- [x] TLS Secret 타입·SAN 확인 (2026-10-08 조회 및 10-09 cp1 TLS 검증 결과 보고)
 - [x] Gateway 스크립트 Bash 문법 검사 (DevOps VM)
-- [x] Gateway 서버 Dry-run 성공 (DevOps VM)
-- [x] On-Prem Argo CD Auto-Sync ON, `main` 추적 확인 (2026-10-08 조회)
-- [ ] 희재님 Gateway `--apply` 승인 및 실제 적용
-- [ ] cp1 복사본 스크립트 SHA-256 일치 확인
-- [ ] cp1 NGF NodePort `verify` Listener·TLS 실측 PASS
-- [ ] GitOps PR #11 Merge
-- [ ] Argo CD Sync·HTTPRoute Accepted/ResolvedRefs 확인
-- [ ] cp1 NGF NodePort `verify-route` 실측 PASS
-- [ ] Infra VM에서 VIP 직접 접속·HTTP 200/401·TLS 실측 PASS
-- [ ] 테스트 로그·스크린샷·작업 시각 및 담당자 기록
+- [x] Gateway 서버 Dry-run 성공 (사전검증 보고)
+- [x] On-Prem Argo CD Auto-Sync ON, `main` 추적 확인
+- [x] 희재님 Gateway `--apply` **실제 적용** (2026-10-09 09:12 KST, cp1, 희재님 결과 공유)
+- [x] Gateway `--apply` **적용 승인·실행 이력 확인** (#79 리뷰·Merge 이후 담당자 희재가 직접 2026-10-09 09:12 KST 적용; 희재님 PR #83 리뷰 확인). 별도 사전 승인 시각·독립 승인 문서 링크는 미확보.
+- [x] DevOps VM에서 `origin/main`의 Gateway 스크립트 SHA-256 **전체 원본 값** 확보 (2026-10-09): `d8597b5bee562267f578896529423f980a01968bfe3e62e67f83fe9b04cb001f`
+- [x] cp1 `/root/setup_onprem_app_listener_1008.sh` 복사본의 **SHA-256 전체 64자리**가 원본과 일치 (2026-10-09 12:06 KST, 희재님 PR #83 리뷰 확인): `d8597b5bee562267f578896529423f980a01968bfe3e62e67f83fe9b04cb001f`
+- [x] cp1 NGF NodePort `verify` Listener·SNI/SAN·TLS 실측 PASS (희재님 09:12 결과 공유, HTTPRoute 반영 전 `/` 404는 예상 응답)
+- [x] GitOps PR #11 Merge (`b47ea396481794644652927a4253eda6ef0ae749`)
+- [x] Argo CD `Synced/Healthy` 및 HTTPRoute 두 ParentRef `Accepted=True`·`ResolvedRefs=True` 확인 (Argo CD reconciled 09:17:15 KST, HTTPRoute cp1 09:30 재확인)
+- [x] cp1 NGF NodePort `verify-route` 실측 PASS (`192.168.34.41:30443`, `/` 200, 비인증 `/api/learning/state` 401, TLS 검증 0, exit 0; 희재님 결과 공유)
+- [x] Infra VM에서 VIP 직접 접속·HTTP 200/401·TLS 실측 PASS (`192.168.24.100:443`, 09:31:04 KST, curl_exit 0; 희재님 결과 공유)
+- [x] 테스트 결과 요약·실행 위치·확인된 시각·담당자 기록 (본 문서 및 GitOps #11 댓글)
+- [ ] Gateway/NodePort/VIP 원본 테스트 로그 또는 스크린샷 **보관 위치·증적 링크** 확인 (결과 요약만 확보)
 
-| 실행 일시 | 단계 | 실행 위치·담당자 | PASS/FAIL | 증적 링크/비고 |
+| 실행 일시 (KST) | 단계 | 실행 위치·담당자 | PASS/FAIL | 증적 링크/비고 |
 |---|---|---|---|---|
-| 미기록 | Gateway `--apply` | cp1 / 희재 | 미실행 | |
-| 미기록 | Listener `verify` (NodePort) | cp1 / 희재 | 미실행 | |
-| 미기록 | PR #11/Argo CD | On-Prem / 예린 | 미실행 | |
-| 미기록 | `verify-route` (NodePort) | cp1 / 희재 | 미실행 | |
-| 미기록 | HTTPS 최종검증 (VIP) | Infra VM | 미실행 | |
+| 2026-10-09 09:12 | Gateway `--apply` | cp1 / 희재 | **PASS (보고)** | `https-public-app` 신규 Listener 추가, `Accepted/Programmed/ResolvedRefs=True`; #79 리뷰·Merge 후 담당자 직접 적용, 독립 사전 승인 시각·문서 링크 미확보 |
+| 2026-10-09 09:12경 | Listener `verify` (NodePort) | cp1 / 희재 | **PASS (보고)** | `192.168.34.41:30443`, SNI/SAN 일치, Let’s Encrypt YE2, TLS 검증 0, exit 0; 당시 `/` 404는 HTTPRoute 반영 전 정상 |
+| 2026-10-09 09:17:15 | PR #11/Argo CD 반영 | GitHub·On-Prem DevOps VM / 예린 | **PASS (조회)** | [GitOps PR #11](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/11), Revision `b47ea396`, `Synced/Healthy`; 신규 hostname 및 ParentRef 수락 |
+| 2026-10-09 09:30 | HTTPRoute 조건 재확인 | cp1 / 희재 | **PASS (보고)** | `https`, `https-public-app` 모두 `Accepted=True`, `ResolvedRefs=True` |
+| 2026-10-09 09:30 | `verify-route` (NodePort) | cp1 / 희재 | **PASS (보고)** | `/` 200, 비인증 `/api/learning/state` 401, ssl_verify 0, exit 0 |
+| 2026-10-09 09:31:04 | HTTPS 최종검증 (VIP) | Infra VM / 희재 공유 결과 | **PASS (보고)** | VIP `192.168.24.100:443`, `/` 200, 비인증 `/api/learning/state` 401, ssl_verify 0, curl_exit 0 |
+
+**범위 판정:** T5의 **온프렘 앱 HTTPS 라우팅 선행 조건** 충족, T7은 **A 범위 경로 검증 준비 완료**. 실제 T5 DR 전환·T7 CA 전환/연속성 시험 성공을 뜻하지 않으며, T7 A/B는 리허설 당일 3.4절 재확인 후 확정한다. 승인·적용 경위 및 cp1 전체 SHA-256 일치는 PR #83 리뷰 확인으로 반영했다. 독립 사전 승인 시각·문서 링크와 원본 실행 로그·스크린샷 보관 위치는 별도 보완한다.
+
 
 ## 8. 관련 자료
 
