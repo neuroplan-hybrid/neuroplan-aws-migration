@@ -70,7 +70,7 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 
 ## 10/12 ROSA P0 단계적 배포·Jenkins 실행 게이트 (5-1 → 5-2)
 
-**합의된 변경:** GitOps #12를 즉시 Merge하는 대신, 10/12 ROSA의 기존 이미지 Smoke Test 후 **Jenkins AWS CI/CD로 ROSA·On-Prem DR Backend 이미지 태그를 함께 갱신**하는 방식을 우선한다. 실패·변경 미감지 등으로 자동 갱신을 할 수 없으면 팀 승인하에 **#12 Merge 경로로 복귀**한다. Jenkins 경로 성공 전에 #12를 Close하지 않는다.
+**합의된 변경 및 프로젝트 목표:** GitOps #12를 즉시 Merge하는 대신, 10/12 ROSA의 기존 이미지 Smoke Test 후 **Jenkins AWS CI/CD의 변경 감지 → 테스트 → ECR 이미지 검증/빌드·Push → GitOps 태그 갱신 → Argo CD 배포**가 실제로 작동하는지 검증한다. Jenkins가 실패하거나 변경을 감지하지 못하면 **원인을 분석해 파이프라인/설정 수정 PR 및 재실행으로 해결하는 것이 원칙**이며, #12를 즉시 수동 Merge해서 CI/CD 검증을 대체하지 않는다. Jenkins 검증 성공 전까지 #12는 Open으로 유지한다.
 
 ### 0. 최초 배포 이전 필수 게이트 (예린·희재·정현)
 
@@ -95,7 +95,7 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 
 - [ ] On-Prem VM 기동 후 **`ecr-pull-secret` 갱신 Job 성공**, Secret·Backend·Frontend Pod 상태 확인(기존 #33 A+B 게이트)
 - [ ] Jenkins 사용 Job이 실제 `Jenkinsfile.aws`를 참조하는지 확인. 이전 성공 빌드의 커밋·현재 Application `HEAD`·Backend 경로 변경분을 **읽기 전용으로 비교**해 `BACKEND_CHANGED=true` 예상 여부 확인
-- [ ] 예정 이미지 태그/이미 ECR에 존재하는 태그·GitOps `main` 최신 Revision 확인. `a4d120f` 등 기존 태그가 ECR에 있으면 **Build/Push는 생략될 수 있어도 GitOps 갱신은 진행 가능**. `BACKEND_CHANGED=false`면 무리하게 커밋을 만들어 강제하지 않고 아래 대안 사용
+- [ ] 예정 이미지 태그/이미 ECR에 존재하는 태그·GitOps `main` 최신 Revision 확인. `a4d120f` 등 기존 태그가 ECR에 있으면 **Build/Push 생략은 정상적인 이미지 재사용**이며 GitOps 갱신은 진행 가능하나, **실제 Backend 빌드·ECR Push 성공 증적을 대체하지는 못한다**. `BACKEND_CHANGED=false`면 무의미한 커밋으로 강제하지 않고 아래 Jenkins 원인 분석·보완 절차 적용
 - [ ] **GitOps `main` 직접 Push → On-Prem DR Argo CD Auto-Sync/Pod 재배포 가능**을 팀 채널에 사전 공지하고 담당자·작업 시각·롤백 방안 합의 및 실행 승인 확보
 - [ ] ROSA Argo CD Auto-Sync 및 대상 경로 `overlays/rosa` 확인. 현재 서비스 사용 중인 환경·테스트 계정/쓰기 영향 점검
 
@@ -107,11 +107,20 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 - [ ] **On-Prem 희재:** Argo CD Sync·Backend Pod Ready, `dr-health` HTTP 200, Infra VM VIP 직접 HTTPS `/` 200, 비인증 `/api/learning/state` 401, TLS `ssl_verify_result=0` 재검증
 - [ ] **양쪽 실제 실행 이미지 태그·다이제스트** 확인하여 버전 일치 여부 기록. ROSA/On-Prem 검증 PASS 후 k6 기준선·T1/T2는 **새 이미지** 기준 측정
 
-**Jenkins 우선 경로 실패/미실행 시 대안 및 #12 종료 기준**
+**Jenkins 실패 시 원인 분석 → 수정 → 재실행 (CI/CD 검증 필수)**
 
-- [ ] `BACKEND_CHANGED=false`/Jenkins 실패/배포 영향 승인 미완료 시 **#12는 유지**, 원인 및 결과 기록; 승인된 **#12 Merge → ROSA Sync·롤아웃·Smoke Test** 경로 사용(이 경우 On-Prem이 기존 태그일 수 있으므로 '동일 버전 Warm Standby'라고 주장하지 않음)
-- [ ] Jenkins가 **양쪽 이미지 갱신·검증에 실제 성공**하고 #12가 중복 변경임을 확인한 다음에만 **#12 Merge 없이 Close**(별도 확인 후 수행). 실패·중단 상태에서 임의 Close 금지
-- [ ] 늦어도 **10/13 T5 Fence 사전 리허설 전**에는 ROSA의 Fence 포함 이미지 배포·`false` 정상 쓰기 검증을 완료하도록 계획(미충족 시 리허설 보류)
+- [ ] **변경 감지 실패(`BACKEND_CHANGED=false`):** 이전 성공 빌드 SHA·현재 Application HEAD·Git diff 대상 경로 및 Jenkins Job의 SCM/브랜치 설정을 대조한다. 실제 Backend 변경이 없으면 이것은 정상적인 Skip이므로 **허위 변경 커밋으로 강제하지 않는다**. 기존 ECR 이미지 재배포가 필요하면 승인된 별도 코드 PR에서 *기존 태그 배포(Deploy-only) 옵션* 및 안전장치를 설계·검증한 뒤 Jenkins로 재실행한다. 코드 변경이 실제 있었는데도 감지 실패했다면 감지 로직을 수정·테스트한다.
+- [ ] **빌드·단위 테스트 실패:** Jenkins 콘솔/테스트 리포트에서 원인을 분석하고 Application·Jenkinsfile의 필요한 수정은 **별도 PR로 리뷰·검증 후** 반영한다. 다시 Jenkins를 실행해 테스트·빌드 성공을 확인한다.
+- [ ] **ECR 인증/Push·GitOps Push 실패:** AWS/ECR 권한, 기존 immutable tag·digest, GitOps 저장소 접근 권한, Push 충돌·브랜치 상태를 진단하고 해당 설정/스크립트를 승인된 방법으로 수정한 뒤 재실행한다. 임의로 ECR 태그를 덮어쓰거나 GitOps `main`을 수동 강제 Push하지 않는다.
+- [ ] **Argo CD 롤아웃·On-Prem 회귀 실패:** 신규 배포 중단, 두 환경의 이전 정상 이미지/Secret·Pod 상태 확인, 희재님과 승인된 복구 절차 협의. 원인을 고친 후 양쪽 Smoke Test를 다시 통과해야 한다.
+- [ ] 모든 실패 회차에 **Jenkins Job·빌드 번호, Application/GitOps SHA, 실패 Stage·콘솔 로그(비밀정보 제거), 수정 PR, 재실행 번호, 최종 PASS**를 기록한다. 원인 수정이 확인되지 않은 무조건 재시도는 지양한다.
+- [ ] **전체 CI/CD 검증 범위:** 기존 `a4d120f`를 재사용해 Build/Push가 Skip되었다면 *배포 자동화만 검증된 것*으로 기록한다. 프로젝트의 **빌드 → 테스트 → ECR Push → GitOps 갱신 → Argo CD 적용** 전체 증적은 이후 승인된 실제 Backend 변경 커밋(신규 ECR immutable 태그)에 대한 Jenkins 실행으로 별도 확인한다. 기존 ECR 이미지가 있었다는 이유만으로 전체 빌드·Push 검증 완료 표시 금지.
+
+**#12 종료 기준 및 일정 보호**
+
+- [ ] Jenkins를 통해 **양쪽 이미지 태그/다이제스트 갱신과 ROSA·On-Prem 서비스 재검증이 실제 PASS**하고 #12가 중복 변경임을 확인한 다음에만 **#12 Merge 없이 Close**(별도 승인 후 수행). 실패·중단 상태에서는 Open 유지.
+- [ ] Jenkins가 당일 해결되지 않으면 **실패 원인·수정 PR·재검증 일정**을 Issue/실행시트에 기록하고 Jenkins를 계속 검증한다. **#12 수동 Merge는 자동화 성공을 대체하지 않으며**, T5 준비 일정상 서비스 배포가 꼭 필요한 비상시에 한해 별도 팀 승인으로 추진할 수 있다. 이 경우 *수동 배포 성공*과 *Jenkins CI/CD 미검증*을 명확히 분리 기록한다.
+- [ ] 늦어도 **10/13 T5 Fence 사전 리허설 전**에는 ROSA의 Fence 포함 이미지 배포·`false` 정상 쓰기 검증을 목표로 하되, 미충족이면 **리허설을 보류·일정 재협의**한다. 검증이 안 된 상태에서 DR·DB 승격을 강행하지 않는다.
 
 ### 10/13 T5 사전검증 범위 주의
 
