@@ -38,7 +38,7 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 - [x] Route 53 wiring/validation PR (#49, ROSA LB DNS 입력·weighted 전환은 10/13)
 - [x] 10/12 ImagePullBackOff 대응 A 실행 순서 반영 (실행시트)
 - [x] On-Prem DR Backend·Frontend `imagePullPolicy: IfNotPresent` GitOps 반영 (B, gitops #6 Merged 10/8)
-- [x] 10/9 On-Prem `app.neuroplan.cloud` HTTPS 사전 경로 검증 PASS: Gateway Listener, GitOps #11/HTTPRoute, cp1 NGF NodePort, Infra VM VIP(`/` 200·비인증 `/api/learning/state` 401·TLS 검증 0). **희재님 공유 결과 및 GitOps #11 댓글 기준이며 실제 T5/T7 시연 완료는 아님**. 원본 로그 보관·cp1 전체 스크립트 SHA/적용 승인 기록은 별도 증적 추적.
+- [x] 10/9 On-Prem `app.neuroplan.cloud` HTTPS 사전 경로 검증 PASS: Gateway Listener, GitOps #11/HTTPRoute, cp1 NGF NodePort, Infra VM VIP(`/` 200·비인증 `/api/learning/state` 401·TLS 검증 0). **희재님 공유 결과 및 GitOps #11 댓글 기준이며 실제 T5/T7 시연 완료는 아님**. 원본 로그 보관 위치는 별도 증적 추적. cp1 스크립트 SHA-256 전체 64자리 원본 일치(10/9 12:06, 희재님 확인); Gateway 적용은 #79 리뷰·Merge 후 담당자가 직접 수행한 이력으로 기록.
 
 ### 예린 (플랫폼)
 - [x] rosa-on 사전 Plan 재확인 (**2026-10-08 실행 가이드 기준 39 생성 / 0 변경 / 0 삭제**). **10/12 승인된 State에서 최신 Plan 재확인 필수**
@@ -52,7 +52,7 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 - [x] Jenkins 재실행 시 Backend `a4d120f` 이미지 재사용·GitOps 자동 Push·On-Prem 배포 확인. 이후 SCM 자동 감지로 Frontend `48d7e15` 단독, Backend `e5d288f` 단독 Build/Push·GitOps Push·On-Prem 배포 확인(각각 `2/2 Ready`)
 - [x] ECR 최신 이미지 확인: Frontend `48d7e15` (`sha256:a8eca0d334537dcdcbcaf67712cc60018fe8d3290fe21c3eb77c140c6bbe1971`), Backend `e5d288f` (`sha256:5a379cde7eb6906296864cac2ae1b6174ed3f952a4382019731dc87e4460afe0`)
 - [x] GitOps `main` [commit `9bbe350`](https://github.com/neuroplan-hybrid/neuroplan-gitops/commit/9bbe35025a9639c054cb9cd63f08fc7103f5df17): ROSA·On-Prem DR Overlay에 위 최신 태그 반영; On-Prem Argo CD `Synced/Healthy` 확인
-- [x] GitOps [PR #12](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/12)는 기존 ROSA Backend `b7deb4a → a4d120f` 변경 목적의 **Open/미병합** PR. 현재 `main`은 더 최신인 `e5d288f`이므로 그대로 Merge하지 않고 담당자 검토 후 별도 정리
+- [x] GitOps [PR #12](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/12)는 기존 ROSA Backend `b7deb4a → a4d120f` 변경 목적의 **Merge 없이 Close(10/9)** 된 구버전 PR. 현재 `main`은 더 최신인 `e5d288f`이므로 재병합하지 않음
 - [ ] **10/12 ROSA 신규 환경** 이미지 Pull·Pod Ready·MaxScale 연결·TLS·로그인/조회/저장·Fence `false` 검증 및 실측 SHA 확보 (**아직 미실행**)
 
 ### 정현 (데이터)
@@ -69,7 +69,7 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 | 10/13 | 통합 | 10/12 결과 재확인, ROSA TLS preflight, Route 53 tfvars apply(조건 충족 시), 헬스체크, **Fence=true 503 범위 사전검증(별도 승인 및 원복, 전체 T5 DR 전환 아님)** |
 | 10/14 | 전환 사전검증 | GTID catch-up, Weighted 10/90 → 50/50 |
 | 10/15 | Cutover | DB Cutover, 역복제, 저녁 진척·비용 판단 |
-| 10/16 | DR·종료 | 장애 시연 T1~T6, RTO/RPO, 18:00 destroy 시작 |
+| 10/16 | DR·종료 | T1~T6 DR·복구 시연/설명, T7 CA 전환은 별도 승인·일정 확정 대상; RTO/RPO 기록, 18:00 destroy 시작 |
 
 ## 10/9 CI/CD 사전 실증 및 10/12 ROSA P0 최초 배포 게이트
 
@@ -77,11 +77,11 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 
 ### 10/9 완료: Jenkins·ECR·GitOps·On-Prem 증적 (ROSA 실증과 구분)
 
-- [x] AWS Migration [PR #85](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/85)의 Jenkins `ecr:DescribeImages` 권한 Terraform Apply 완료. 기존 실패 Job 수동 재실행 PASS(Backend `a4d120f` ECR 재사용, Maven 8/8 테스트, GitOps `eee3f3b`, On-Prem Argo CD `Synced/Healthy`). **PR #85는 여전히 Draft/미병합이므로 코드 리뷰 및 Merge 필요.**
+- [x] AWS Migration [PR #85](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/85)의 Jenkins `ecr:DescribeImages` 권한 Terraform Apply 완료. 기존 실패 Job 수동 재실행 PASS(Backend `a4d120f` ECR 재사용, Maven 8/8 테스트, GitOps `eee3f3b`, On-Prem Argo CD `Synced/Healthy`). **PR #85는 현재 Draft/미병합(10/9 조회 기준)으로 코드 리뷰 및 별도 Merge 필요.**
 - [x] Frontend만 Dockerfile 주석 변경([Application `48d7e15`](https://github.com/neuroplan-hybrid/neuroplan-application/commit/48d7e159f5a9f05f63e5209f2550741ac23bb2db)): Jenkins `Started by an SCM change`, `Frontend changed=true`/`Backend changed=false`, Frontend만 Build/ECR Push, GitOps [`ee462cc`](https://github.com/neuroplan-hybrid/neuroplan-gitops/commit/ee462cc14acb7ac71a95768a774b0bdb167cf0c1) Push, On-Prem Frontend `2/2 Ready`, ECR Digest 일치.
 - [x] Backend만 Dockerfile 주석 변경([Application `e5d288f`](https://github.com/neuroplan-hybrid/neuroplan-application/commit/e5d288fa58148551c7ce7dfa923c7b5d6e90464d)): Jenkins `Started by an SCM change`, `Frontend changed=false`/`Backend changed=true`, Maven 8/8, Backend만 Build/ECR Push, GitOps [`9bbe350`](https://github.com/neuroplan-hybrid/neuroplan-gitops/commit/9bbe35025a9639c054cb9cd63f08fc7103f5df17) Push, On-Prem Backend 신규 ReplicaSet `2/2 Ready`, ECR Digest 일치.
-- [x] On-Prem Argo CD `Synced / Healthy` revision `9bbe350` 및 Frontend `48d7e15`·Backend `e5d288f` 최신 태그 확인. 테스트용 Dockerfile 주석은 검증 이력으로 보존한다.
-- [x] Infra VM에서 HTTPS `/` 200, 비인증 `/api/learning/state` 401, TLS 검증 0 및 사용자 로그인→조회→저장 확인(앞선 Backend `a4d120f` 배포 회차). **최종 `e5d288f` 배포 이후 동일 사용자 기능 재검증과 `dr-health` 200 재확인은 별도 증적 필요.**
+- [x] On-Prem Argo CD `Synced / Healthy` revision `9bbe350` 및 Frontend `48d7e15`·Backend `e5d288f` 최신 태그 확인. cp1에서 Backend `2/2` rollout 완료 및 HTTPRoute `neuroplan-login-mvp` → `application/neuroplan-backend` 연결 재확인(10/9 12:03, Pod 시작 11:31 KST). 테스트용 Dockerfile 주석은 검증 이력으로 보존한다.
+- [x] Infra VM에서 HTTPS `/` 200, 비인증 `/api/learning/state` 401, TLS 검증 0 및 사용자 로그인→조회→저장 확인(앞선 Backend `a4d120f` 배포 회차). **최종 `e5d288f` 배포 이후 동일 사용자 기능 재검증은 별도 증적 필요.** `dr-health` 200은 10/9 12:19 외부 DR NLB IP `--resolve` 경로(인터넷 → DR NLB → VPN → VIP)에서 확인되었으며, 공개 DNS는 Route 53 레코드 미생성(`routing off`)으로 NXDOMAIN이다. 이 경로 검증은 ROSA 배포 성공이나 사용자 기능 재검증을 의미하지 않는다.
 - **실증 범위:** SCM 스케줄 `H/2 * * * *`에 따른 자동 실행 확인(실제 Push→시작 소요 초 단위 미측정). On-Prem Pod 롤아웃 완료는 확인했지만 배포 중 요청 연속성·무중단은 미측정. **ROSA Pod·서비스는 아직 검증하지 않았다.**
 
 ### 0. 최초 배포 이전 필수 게이트 (예린·희재·정현)
@@ -103,7 +103,7 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 - [ ] MaxScale에 기록된 **실제** ROSA Source IP를 희재님과 공유(예상 IP를 실측값으로 기록하지 않음)
 - [ ] Smoke Test PASS 시각, GitOps/Application SHA, Pod 태그·Digest 및 TLS/DB/서비스 증적 저장. **실패 시 Jenkins를 무조건 재실행하거나 GitOps #12를 수동 Merge하지 말고** Pull/Secret/Router/DB/권한 등 원인을 먼저 분석
 
-### 5-2. 10/12 ROSA 실측·On-Prem 교차 검증 및 변경 발생 시 CI/CD 관리
+### 5-2. 10/9 사전 실증 완료 이후 ROSA·On-Prem 교차 검증 및 변경 발생 시 CI/CD 관리 (10/12 필수 재실행 아님)
 
 - [ ] **ROSA 예린:** 최초 ROSA 배포와 Argo CD Sync·Pod Ready, 로그인/조회/저장·Fence `false` 확인 뒤 #33/실행시트에 결과와 SHA 기록
 - [ ] **On-Prem 희재:** 최신 이미지 버전·Argo CD `Synced/Healthy` 상태 확인. `ecr-pull-secret` 갱신 게이트 준수 및 `dr-health` 200, Infra VM VIP HTTPS `/` 200, 비인증 `/api/learning/state` 401, TLS `ssl_verify_result=0`·기능 Smoke Test 재검증
@@ -114,8 +114,8 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 
 **기존 GitOps PR #12 처리**
 
-- [ ] [GitOps #12](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/12)는 이전 최초 배포용 Backend `b7deb4a → a4d120f` 변경 PR. **GitOps `main`에는 이미 더 최신인 `e5d288f`가 반영됐으므로 그대로 Merge하지 않는다.** 팀 검토 후 중복·구버전 PR을 Merge 없이 Close할지 별도 승인받아 결정한다. PR 생성/유지만으로 ROSA 배포 완료로 판단하지 않음
-- [ ] GitOps #12 정리는 Jenkins 사전 실증 완료 이력과 구분하고, **10/12 ROSA 최초 배포의 승인·Smoke Test 조건을 대체하지 않음**
+- [x] [GitOps #12](https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/12)는 이전 최초 배포용 Backend `b7deb4a → a4d120f` 변경 PR로, **GitOps `main`의 `e5d288f`가 최신이어서 10/9 Merge 없이 Close 완료**. 이 정리 자체는 ROSA 배포 완료를 의미하지 않음
+- [x] GitOps #12 정리는 Jenkins 사전 실증 완료 이력과 구분하고, **10/12 ROSA 최초 배포의 승인·Smoke Test 조건을 대체하지 않음**
 - [ ] 늦어도 **10/13 T5 Fence 사전 리허설 전** ROSA Fence 포함 최신 Backend의 `false` 쓰기 정상 검증 목표. 미충족이면 리허설 보류·일정 재협의. 검증 없는 DR·DB 승격은 수행하지 않음
 
 ### 10/13 T5 사전검증 범위 주의
@@ -206,6 +206,6 @@ PR #32(ROSA 가동·비용 최적화 결정)에 따른 ROSA 가동 일정과 담
 
 ## 관련 및 리뷰 반영
 - AWS Migration: #22, #28, #32, **#33**, #47~#50, #52, #55, #56~#62, **#76**(DB/VPN/TLS), **#75**(Cutover 후 RDS 계정 PR), **#77·PR #78**(T7 CA), **#79·#80**(On-Prem HTTPS), **#81·PR #82**(T5 Fence 런북)
-- GitOps: **#6**(On-Prem IfNotPresent), **#10**(ROSA Fence 기본 `false`, Merged), **#11**(On-Prem HTTPS HTTPRoute, Merged), **#12**(이전 Backend `a4d120f` 지정, Open/미병합·현재 최신 `e5d288f`로 대체되어 리뷰 후 정리)
+- GitOps: **#6**(On-Prem IfNotPresent), **#10**(ROSA Fence 기본 `false`, Merged), **#11**(On-Prem HTTPS HTTPRoute, Merged), **#12**(이전 Backend `a4d120f` 지정, 10/9 Merge 없이 Close·현재 최신 `e5d288f`로 대체)
 - Application: **#6**(Fence 구현, Merged), **#7**(RDS Secret 갱신 중 JWT 유지, Merged)
 - 실행 가이드: 10/12 ROSA P0 구축 실행 가이드(기준일 10/8); 본 문서는 #33 일정·담당·Gate의 버전 관리본이며 해당 가이드 및 T5/T7 런북을 대체하지 않음
