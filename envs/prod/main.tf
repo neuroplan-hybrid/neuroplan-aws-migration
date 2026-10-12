@@ -67,6 +67,8 @@ module "rosa" {
   count  = var.enable_rosa ? 1 : 0
   source = "../../modules/rosa"
 
+  depends_on = [module.network]
+
   cluster_name         = var.cluster_name
   aws_subnet_ids       = concat(module.network.public_subnet_ids, module.network.private_rosa_subnet_ids)
   openshift_version    = var.openshift_version
