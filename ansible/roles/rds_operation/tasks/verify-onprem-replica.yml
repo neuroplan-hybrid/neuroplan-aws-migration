@@ -2,9 +2,9 @@
 - name: Build exact expected RDS replica source patterns
   ansible.builtin.set_fact:
     rds_operation_master_host_pattern: >-
-      {{ '(?m)^Master_Host:\\s+' ~ (rds_operation_endpoint | regex_escape) ~ '\\s*$' }}
+      {{ '(?m)^[ \\t]*Master_Host:[ \\t]+' ~ (rds_operation_endpoint | regex_escape) ~ '[ \\t]*\\r?$' }}
     rds_operation_master_port_pattern: >-
-      {{ '(?m)^Master_Port:\\s+' ~ (rds_operation_port | string | regex_escape) ~ '\\s*$' }}
+      {{ '(?m)^[ \\t]*Master_Port:[ \\t]+' ~ (rds_operation_port | string | regex_escape) ~ '[ \\t]*\\r?$' }}
   no_log: true
 
 - name: Read On-Prem replica status
@@ -20,11 +20,11 @@
     that:
       - rds_operation_onprem_replica_status.stdout is search(rds_operation_master_host_pattern)
       - rds_operation_onprem_replica_status.stdout is search(rds_operation_master_port_pattern)
-      - rds_operation_onprem_replica_status.stdout is search('Slave_IO_Running:[[:space:]]+Yes')
-      - rds_operation_onprem_replica_status.stdout is search('Slave_SQL_Running:[[:space:]]+Yes')
-      - rds_operation_onprem_replica_status.stdout is search('Using_Gtid:[[:space:]]+Slave_Pos')
-      - rds_operation_onprem_replica_status.stdout is not search('Last_IO_Error:[[:space:]]+[^[:space:]]')
-      - rds_operation_onprem_replica_status.stdout is not search('Last_SQL_Error:[[:space:]]+[^[:space:]]')
+      - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Slave_IO_Running:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Slave_SQL_Running:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Using_Gtid:[ \\t]+Slave_Pos[ \\t]*\\r?$')
+      - rds_operation_onprem_replica_status.stdout is not search('(?m)^[ \\t]*Last_IO_Error:[ \\t]*\\S')
+      - rds_operation_onprem_replica_status.stdout is not search('(?m)^[ \\t]*Last_SQL_Error:[ \\t]*\\S')
     fail_msg: "On-Prem DB가 정상적인 RDS Replica가 아닙니다. DR Drill을 진행하지 마세요."
 
 - name: Display sanitized replica result

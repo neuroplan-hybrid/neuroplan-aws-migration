@@ -28,6 +28,9 @@ jobs:
           python -m pip install "ansible-core==2.14.18"
           ansible-galaxy collection install             -r ansible/requirements.yml             -p ansible/collections
 
+      - name: Test replication status predicates
+        run: python -m unittest discover -s ansible/tests -p 'test_*.py' -v
+
       - name: Prepare example local configuration
         run: |
           cp ansible/inventory/rds-operation.ini.example             ansible/inventory/rds-operation.ini
