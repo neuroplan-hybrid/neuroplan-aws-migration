@@ -25,9 +25,9 @@
 - name: Require zero replication lag at cutover
   ansible.builtin.assert:
     that:
-      - rds_operation_cutover_status.stdout is search('Slave_IO_Running:[[:space:]]+Yes')
-      - rds_operation_cutover_status.stdout is search('Slave_SQL_Running:[[:space:]]+Yes')
-      - rds_operation_cutover_status.stdout is search('Seconds_Behind_Master:[[:space:]]+0')
+      - rds_operation_cutover_status.stdout is search('(?m)^[ \\t]*Slave_IO_Running:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_cutover_status.stdout is search('(?m)^[ \\t]*Slave_SQL_Running:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_cutover_status.stdout is search('(?m)^[ \\t]*Seconds_Behind_Master:[ \\t]+0[ \\t]*\\r?$')
     fail_msg: "RDS가 Source를 따라잡지 못했습니다. RDS를 Primary로 전환하지 마세요."
 
 - name: Stop and reset RDS inbound replication
