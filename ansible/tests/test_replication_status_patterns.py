@@ -144,5 +144,74 @@ class OnPremReplicaTests(unittest.TestCase):
             self.assertEqual(bool(result), expected)
 
 
+
+def renamed_status(indent="    ", newline="\n", **overrides):
+    return (status(indent, newline, **overrides)
+            .replace("Master_Host:", "Source_Host:")
+            .replace("Master_Port:", "Source_Port:")
+            .replace("Slave_IO_Running:", "Replica_IO_Running:")
+            .replace("Slave_SQL_Running:", "Replica_SQL_Running:"))
+
+
+class RdsStatusNamingTests(unittest.TestCase):
+    def test_documented_replica_format_passes_inbound_and_cutover(self):
+        for filename, task_name in InboundAndCutoverTests.checks:
+            for indent, newline in (("", "\n"), ("    ", "\n"), ("\t", "\r\n")):
+                with self.subTest(filename=filename, indent=indent):
+                    self.assertTrue(assertion_passes(
+                        filename, task_name, renamed_status(indent, newline)))
+
+    def test_documented_replica_format_rejects_unhealthy_or_missing_fields(self):
+        cases = (
+            {"Slave_IO_Running": "No"},
+            {"Slave_IO_Running": "Connecting"},
+            {"Slave_IO_Running": "YesButNotHealthy"},
+            {"Slave_SQL_Running": "No"},
+            {"Slave_SQL_Running": None},
+            {"Seconds_Behind_Master": "12"},
+            {"Seconds_Behind_Master": "NULL"},
+            {"Seconds_Behind_Master": None},
+        )
+        for filename, task_name in InboundAndCutoverTests.checks:
+            for overrides in cases:
+                with self.subTest(filename=filename, overrides=overrides):
+                    self.assertFalse(assertion_passes(
+                        filename, task_name, renamed_status(**overrides)))
+
+    def test_both_host_names_trigger_reset_approval_gate(self):
+        task = next(t for t in tasks("configure-rds-inbound.yml")
+                    if t["name"] == "Require explicit reset approval for an existing RDS inbound replica")
+        for factory in (status, renamed_status):
+            for indent, newline in (("", "\n"), ("    ", "\n"), ("\t", "\r\n")):
+                values = {
+                    "rds_operation_existing_inbound_status": SimpleNamespace(stdout=factory(indent, newline)),
+                    "rds_operation_allow_reset_replica": False,
+                }
+                with self.subTest(format=factory.__name__, indent=indent):
+                    self.assertTrue(ENV.compile_expression(task["when"])(**values))
+                    self.assertFalse(ENV.compile_expression(
+                        task["ansible.builtin.assert"]["that"][0])(**values))
+                    values["rds_operation_allow_reset_replica"] = True
+                    self.assertTrue(ENV.compile_expression(
+                        task["ansible.builtin.assert"]["that"][0])(**values))
+
+    def test_all_existing_replica_guards_detect_both_host_names(self):
+        expressions = []
+        for task in tasks("configure-rds-inbound.yml"):
+            conditions = task.get("when", [])
+            if isinstance(conditions, str):
+                conditions = [conditions]
+            expressions.extend(c for c in conditions
+                               if "rds_operation_existing_inbound_status.stdout" in c)
+        self.assertEqual(len(expressions), 6)
+        for expression in expressions:
+            for factory in (status, renamed_status):
+                self.assertTrue(ENV.compile_expression(expression)(
+                    rds_operation_existing_inbound_status=SimpleNamespace(stdout=factory())))
+            for output in ("", "Source_Host: \n", "Master_Host: \n",
+                           "Not_Source_Host: 192.168.44.51\n"):
+                self.assertFalse(ENV.compile_expression(expression)(
+                    rds_operation_existing_inbound_status=SimpleNamespace(stdout=output)))
+
 if __name__ == "__main__":
     unittest.main()

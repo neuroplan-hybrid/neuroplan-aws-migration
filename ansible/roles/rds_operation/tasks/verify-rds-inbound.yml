@@ -19,8 +19,8 @@
 - name: Require healthy RDS inbound replication
   ansible.builtin.assert:
     that:
-      - rds_operation_inbound_status.stdout is search('(?m)^[ \\t]*Slave_IO_Running:[ \\t]+Yes[ \\t]*\\r?$')
-      - rds_operation_inbound_status.stdout is search('(?m)^[ \\t]*Slave_SQL_Running:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_inbound_status.stdout is search('(?m)^[ \\t]*(?:Slave|Replica)_IO_Running:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_inbound_status.stdout is search('(?m)^[ \\t]*(?:Slave|Replica)_SQL_Running:[ \\t]+Yes[ \\t]*\\r?$')
       - rds_operation_inbound_status.stdout is search('(?m)^[ \\t]*Seconds_Behind_Master:[ \\t]+0[ \\t]*\\r?$')
     fail_msg: "RDS가 On-Prem Source를 따라잡지 못했습니다. Cutover를 진행하지 마세요."
 
