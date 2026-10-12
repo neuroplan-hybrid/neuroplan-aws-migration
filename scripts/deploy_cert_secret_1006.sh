@@ -16,12 +16,16 @@
 #   ROSA_HOST  oc 로그인된 호스트 SSH 대상 (10/12 이후)
 #   ROSA_KUBECONFIG  ROSA_HOST에 있는 ROSA 전용 kubeconfig 절대 경로 (rosa·purge-rosa 필수, status는 없으면 ROSA 비교 생략)
 #              기본 kubeconfig가 온프렘 K8s를 가리키므로 지정하지 않으면 중단 (1012 트러블슈팅)
+#   ROSA_API_SERVER  기대 ROSA API 서버 URL (기본값: 10/12 생성 클러스터). 클러스터를 다시 만들면 이 값으로 지정
 #
 # 확인 (적용 전, 하나라도 어긋나면 중단)
 #   - 운영 인증서(발급자에 STAGING 없음), SAN 기대값과 정확히 일치, 만료 14일 이상 남음
 #   - 개인 키와 인증서 공개 키 일치, 키 파일 권한 600
 #   - SSH 접속(ConnectTimeout 10), 원격 CLI·namespace 존재
-#   - 대상 클러스터 종류: rosa = route.openshift.io API 있음(OpenShift), onprem = 없음 (같은 namespace 이름이 양쪽에 있어도 오배포 방지)
+#   - 대상 클러스터 (fail-closed): API 서버 URL 조회 성공·비어 있지 않음, API 목록 조회 성공
+#       rosa   = API 서버가 ROSA_API_SERVER와 정확히 일치 + route.openshift.io API 있음
+#       onprem = route.openshift.io API 없음
+#     (같은 namespace 이름이 양쪽에 있어도, 다른 OpenShift 클러스터 kubeconfig여도 오배포 방지)
 #   - 원격 Secret이 이미 있으면: 아래 3조건을 모두 만족할 때만 건너뜀, 아니면 덮어쓰지 않고 중단
 # 원격 Secret 검증 (건너뜀·생성 후 확인·purge 허용 전, PR #46 리뷰)
 #   ① tls.crt·tls.key 모두 존재 ② 원격 인증서 공개 키 = 원격 개인 키 공개 키 (SHA256) ③ 원격 인증서 지문 = 로컬 인증서 지문
@@ -38,6 +42,7 @@ DOMAIN="neuroplan.cloud"
 LABEL_K="neuroplan.io/owner"
 LABEL_V="heejae-cert"
 MIN_DAYS=14
+ROSA_API_SERVER="${ROSA_API_SERVER:-https://api.neuroplan-rosa.tzxf.p3.openshiftapps.com:443}"
 
 usage() { echo "사용법: bash $0 <onprem|rosa|status|purge-onprem|purge-rosa> [--apply]" >&2; exit 1; }
 PHASE="${1:-}"
@@ -122,17 +127,28 @@ kc_problem() {
     [[ "$TGT" == rosa ]] || return 0
     if [[ -z "$KC" ]]; then echo "ROSA_KUBECONFIG 없음 (ROSA 전용 kubeconfig 원격 절대 경로)"
     elif [[ ! "$KC" =~ ^/[A-Za-z0-9._/-]+$ ]]; then echo "ROSA_KUBECONFIG 경로 형식 오류: ${KC}"
+    elif [[ ! "$ROSA_API_SERVER" =~ ^https://[A-Za-z0-9.-]+:[0-9]+$ ]]; then echo "ROSA_API_SERVER 형식 오류: ${ROSA_API_SERVER}"
     fi
 }
-# 대상 클러스터 종류 확인 → 전역 R_SERVER, 맞으면 0 / 다르면 1 (R_MSG에 사유)
+# 대상 클러스터 확인 (fail-closed) → 전역 R_SERVER, 맞으면 0 / 아니면 1 (R_MSG에 사유)
+#   조회 명령 실패(SSH·인증·네트워크·권한)는 "API 없음"과 구분해 실패로 처리
 check_cluster() {
     local apis
-    R_SERVER="$(ssh_t "$CLI config view --minify -o jsonpath='{.clusters[0].cluster.server}'" 2>/dev/null || true)"
-    apis="$(ssh_t "$CLI api-resources --api-group=route.openshift.io -o name" 2>/dev/null || true)"
+    R_SERVER=""
+    if ! R_SERVER="$(ssh_t "$CLI config view --minify -o jsonpath='{.clusters[0].cluster.server}'" 2>/dev/null)"; then
+        R_SERVER=""; R_MSG="API 서버 URL 조회 실패"; return 1
+    fi
+    [[ -n "$R_SERVER" ]] || { R_MSG="API 서버 URL 조회 결과 비어 있음"; return 1; }
+    if [[ "$TGT" == rosa && "$R_SERVER" != "$ROSA_API_SERVER" ]]; then
+        R_MSG="API 서버 불일치 (현재 ${R_SERVER}, 기대 ${ROSA_API_SERVER})"; return 1
+    fi
+    if ! apis="$(ssh_t "$CLI api-resources --api-group=route.openshift.io -o name" 2>/dev/null)"; then
+        R_MSG="API 목록 조회 실패 (인증·네트워크·권한 확인, server=${R_SERVER})"; return 1
+    fi
     if [[ "$TGT" == rosa && "$apis" != *routes* ]]; then
-        R_MSG="OpenShift 아님 (route.openshift.io API 없음, server=${R_SERVER:-알 수 없음})"; return 1
+        R_MSG="OpenShift 아님 (route.openshift.io API 없음, server=${R_SERVER})"; return 1
     elif [[ "$TGT" == onprem && "$apis" == *routes* ]]; then
-        R_MSG="OpenShift 클러스터에 연결됨 (온프렘 아님, server=${R_SERVER:-알 수 없음})"; return 1
+        R_MSG="OpenShift 클러스터에 연결됨 (온프렘 아님, server=${R_SERVER})"; return 1
     fi
     return 0
 }
@@ -145,7 +161,7 @@ check_remote() {
     [[ -z "$KC" ]] || ssh_t "test -r $KC" || die "${HOST}: ROSA_KUBECONFIG 파일 없음 또는 읽기 불가 (${KC})"
     check_cluster || die "${HOST}: 대상 클러스터 불일치 — ${R_MSG}"
     ssh_t "$CLI get namespace $NS >/dev/null 2>&1" || die "${HOST}: namespace ${NS} 없음 또는 권한 없음"
-    log "원격 ${HOST}: ${CLI_BIN} OK, 클러스터 ${R_SERVER:-알 수 없음} (${TGT} 확인), namespace ${NS} OK"
+    log "원격 ${HOST}: ${CLI_BIN} OK, 클러스터 ${R_SERVER} (${TGT} 확인), namespace ${NS} OK"
 }
 
 secret_yaml() {
