@@ -48,7 +48,7 @@ rds_auto_minor_version_upgrade = false
 rds_apply_immediately          = true
 
 # RDS CloudWatch Alarm / SNS 이메일
-# 10/12 RDS 생성 전에는 false를 유지하고, 수신자 확정 후 별도 Plan·승인으로 켠다.
-# 활성화할 때 operation.tfvars에도 같은 값을 반영한다.
+# RDS 알람·SNS Topic·이벤트 구독만 추가되는지 기존 State에서 Plan 검토 후 승인된 Apply만 수행.
+# 이 변경은 현재 적용 대상인 rosa-on 단계에 한정하며 operation.tfvars는 별도 승인 없이 변경하지 않는다.
 # Apply 후 출력되는 SNS Topic ARN으로 이메일 구독을 별도 등록·승인한다.
-enable_rds_cloudwatch_alarms = false
+enable_rds_cloudwatch_alarms = true
