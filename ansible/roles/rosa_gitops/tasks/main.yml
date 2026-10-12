@@ -169,7 +169,7 @@
       - oc
       - apply
       - -f
-      - -
+      - "-"
     stdin: "{{ rosa_gitops_operator_manifest }}"
   register: rosa_gitops_operator_apply
   changed_when: >
@@ -209,7 +209,7 @@
       - oc
       - apply
       - -f
-      - -
+      - "-"
     stdin: "{{ rosa_gitops_instance_manifest }}"
   register: rosa_gitops_instance_apply
   changed_when: >
@@ -288,7 +288,7 @@
       - oc
       - apply
       - -f
-      - -
+      - "-"
     stdin: "{{ rosa_gitops_repository_manifest }}"
   register: rosa_gitops_repository_apply
   changed_when: >
@@ -306,7 +306,7 @@
       - oc
       - apply
       - -f
-      - -
+      - "-"
     stdin: "{{ rosa_gitops_application_manifest }}"
   register: rosa_gitops_application_apply
   changed_when: >
