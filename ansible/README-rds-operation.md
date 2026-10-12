@@ -75,6 +75,16 @@ On-Prem `db-primary`의 백업 스크립트는 InnoDB 일관성 덤프를 위해
 그 값을 실행하지 않고 RDS external replication 시작 위치로만 사용한다.
 초기 동기화의 GTID parser는 현재 단일 MariaDB domain 형식(`1-1-2782`)만 지원한다.
 
+초기 복제 계정 생성도 기존 `mariadb` CLI를 사용하므로 DB VM의 PyMySQL 설치는 필요하지 않다.
+`db-primary`에서 sudo/root Unix socket 접속으로 두 RDS subnet Host 계정을 생성·갱신한다.
+SQL과 비밀번호는 명령행이 아닌 stdin으로 전달하며 Ansible 로그는 `no_log`로 보호한다.
+전용 복제 계정의 직접 권한을 초기화한 뒤 `REPLICATION SLAVE`·`REPLICATION CLIENT`만 부여하고,
+직접 전역 권한과 GRANT OPTION 부재를 조회해 검증한다.
+MariaDB 11.8의 `BINLOG MONITOR` 표기는 `REPLICATION CLIENT`의 별칭으로 허용한다.
+재실행은 같은 계정·Host를 유지하며 전달된 비밀번호와 최소 권한으로 다시 수렴한다.
+이 단계는 상태 변경 태스크이므로 동일 입력 재실행도 `changed`로 표시될 수 있다.
+기존 `ir_repl`, `ir_app`, MaxScale 계정 및 DB 복제 Source/Writer는 변경하지 않는다.
+
 ## 실행 단계
 
 ```bash
