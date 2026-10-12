@@ -5,17 +5,74 @@
       - rds_operation_execute_mutations | bool
       - rds_operation_inbound_repl_hosts | length == 2
       - rds_operation_inbound_repl_password | length >= 32
+      - rds_operation_inbound_repl_password == (rds_operation_inbound_repl_password | trim)
       - rds_operation_inbound_repl_password is match('^[A-Za-z0-9]+$')
-    fail_msg: "prepare-inbound-source에는 승인 플래그, RDS DB subnet 2개, 32자 이상 영숫자 비밀번호가 필요합니다."
+      - rds_operation_inbound_repl_username == (rds_operation_inbound_repl_username | trim)
+      - rds_operation_inbound_repl_username is match('^[A-Za-z_][A-Za-z0-9_]*$')
+    fail_msg: "prepare-inbound-source에는 승인 플래그, RDS DB subnet 2개, 안전한 계정명 및 32자 이상 영숫자 비밀번호가 필요합니다."
   no_log: true
 
-- name: Create least-privilege On-Prem to RDS replication users
-  community.mysql.mysql_user:
-    name: "{{ rds_operation_inbound_repl_username }}"
-    host: "{{ item }}"
-    password: "{{ rds_operation_inbound_repl_password }}"
-    priv: "*.*:REPLICATION SLAVE,REPLICATION CLIENT"
-    state: present
-    login_unix_socket: "{{ rds_operation_socket }}"
+- name: Require safe inbound replication account host patterns
+  ansible.builtin.assert:
+    that:
+      - item is string
+      - item == (item | trim)
+      - item is match('^[A-Za-z0-9_%][A-Za-z0-9._%/-]*$')
+    fail_msg: "복제 계정 Host에는 공백·따옴표 없는 IP, subnet 패턴 또는 DNS 이름만 사용할 수 있습니다."
   loop: "{{ rds_operation_inbound_repl_hosts }}"
+  no_log: true
+
+- name: Create least-privilege On-Prem to RDS replication users with MariaDB CLI
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - "--socket={{ rds_operation_socket }}"
+      - --user=root
+      - --batch
+      - --skip-column-names
+    # SQL은 argv가 아닌 stdin으로 전달한다. 비밀번호를 임시 SQL 파일에 저장하지 않는다.
+    stdin: |
+      CREATE USER IF NOT EXISTS '{{ rds_operation_inbound_repl_username }}'@'{{ item }}'
+        IDENTIFIED BY '{{ rds_operation_inbound_repl_password }}';
+      ALTER USER '{{ rds_operation_inbound_repl_username }}'@'{{ item }}'
+        IDENTIFIED BY '{{ rds_operation_inbound_repl_password }}';
+      REVOKE ALL PRIVILEGES, GRANT OPTION
+        FROM '{{ rds_operation_inbound_repl_username }}'@'{{ item }}';
+      GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.*
+        TO '{{ rds_operation_inbound_repl_username }}'@'{{ item }}';
+  loop: "{{ rds_operation_inbound_repl_hosts }}"
+  no_log: true
+
+- name: Read the replication users direct global privileges
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - "--socket={{ rds_operation_socket }}"
+      - --user=root
+      - --batch
+      - --skip-column-names
+    stdin: |
+      SELECT IF(
+        COUNT(*) = 2
+        AND SUM(PRIVILEGE_TYPE = 'REPLICATION SLAVE') = 1
+        AND SUM(PRIVILEGE_TYPE IN ('REPLICATION CLIENT', 'BINLOG MONITOR')) = 1
+        AND SUM(IS_GRANTABLE = 'YES') = 0,
+        'REPLICATION_ACCOUNT_OK', 'REPLICATION_ACCOUNT_INVALID')
+      FROM information_schema.USER_PRIVILEGES
+      WHERE GRANTEE = CONCAT(
+        QUOTE('{{ rds_operation_inbound_repl_username }}'), '@', QUOTE('{{ item }}'))
+        AND PRIVILEGE_TYPE <> 'USAGE';
+  loop: "{{ rds_operation_inbound_repl_hosts }}"
+  register: rds_operation_inbound_account_checks
+  changed_when: false
+  no_log: true
+
+- name: Require only the intended replication privileges without grant option
+  ansible.builtin.assert:
+    that:
+      - item.stdout | trim == 'REPLICATION_ACCOUNT_OK'
+    fail_msg: "On-Prem 복제 계정의 직접 전역 권한이 최소 복제 권한과 일치하지 않습니다."
+  loop: "{{ rds_operation_inbound_account_checks.results }}"
   no_log: true

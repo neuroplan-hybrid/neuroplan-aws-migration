@@ -75,6 +75,49 @@ On-Prem `db-primary`의 백업 스크립트는 InnoDB 일관성 덤프를 위해
 그 값을 실행하지 않고 RDS external replication 시작 위치로만 사용한다.
 초기 동기화의 GTID parser는 현재 단일 MariaDB domain 형식(`1-1-2782`)만 지원한다.
 
+초기 복제 계정 생성도 기존 `mariadb` CLI를 사용하므로 DB VM의 PyMySQL 설치는 필요하지 않다.
+`db-primary`에서 sudo/root Unix socket 접속으로 두 RDS subnet Host 계정을 생성·갱신한다.
+SQL과 비밀번호는 명령행이 아닌 stdin으로 전달하며 Ansible 로그는 `no_log`로 보호한다.
+전용 복제 계정의 직접 권한을 초기화한 뒤 `REPLICATION SLAVE`·`REPLICATION CLIENT`만 부여하고,
+직접 전역 권한과 GRANT OPTION 부재를 조회해 검증한다.
+MariaDB 11.8의 `BINLOG MONITOR` 표기는 `REPLICATION CLIENT`의 별칭으로 허용한다.
+재실행은 같은 계정·Host를 유지하며 전달된 비밀번호와 최소 권한으로 다시 수렴한다.
+이 단계는 상태 변경 태스크이므로 동일 입력 재실행도 `changed`로 표시될 수 있다.
+기존 `ir_repl`, `ir_app`, MaxScale 계정 및 DB 복제 Source/Writer는 변경하지 않는다.
+
+## Initial Sync 실행 전 실제 DB 검증
+
+전용 복제 계정 `onprem_to_rds`가 다른 작업에 사용 중인지 먼저 확인한다.
+기존 계정을 사용하는 경우 비밀번호·권한 변경의 영향을 확인하기 전에는 실행하지 않는다.
+로컬 Ansible Vault 암호화 파일에 `rds_operation_inbound_repl_password`를 준비하고,
+Initial Sync와 재실행에도 같은 Secret을 사용한다(32자 이상 영숫자).
+
+DevOps VM의 `ansible/`에서 아래 준비 단계만 먼저 실행한다.
+이 단계는 db-primary의 전용 복제 계정만 생성·갱신하고 실제 MariaDB의
+`information_schema.USER_PRIVILEGES` 조회로 권한을 검증한다.
+RDS Import, 복제 연결 또는 Writer 전환은 실행하지 않는다.
+
+```bash
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
+  -e rds_operation_run_mode=prepare-inbound-source \
+  -e rds_operation_execute_mutations=true \
+  -e @group_vars/rds_operation.vault.yml \
+  --ask-vault-pass --ask-pass --ask-become-pass
+```
+
+계정 생성·권한 검증이 성공한 뒤 db-primary에서 최신 논리백업을 생성한다.
+
+```bash
+sudo /usr/local/sbin/db-backup.sh
+```
+
+이후 아래 Initial Sync를 같은 암호화 변수 파일과 함께 실행한다.
+실제 플레이북 순서는 **덤프 Import → 전용 복제 계정 준비 재실행 → GTID 복제 연결·검증**이다.
+사전 계정 검증은 Import 전에 실제 MariaDB 호환성을 확인하기 위한 절차이며,
+플레이북 내부 순서를 변경한 것은 아니다. 계정 DDL은 binlog에 기록될 수 있고,
+백업 이후의 준비 재실행 DDL도 RDS로 복제될 수 있다.
+CI의 SQL fixture 테스트는 실제 MariaDB 계정 생성·권한 검증 성공 증적을 대신하지 않는다.
+
 ## 실행 단계
 
 ```bash
