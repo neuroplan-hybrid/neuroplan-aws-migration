@@ -46,6 +46,29 @@ chmod 600 group_vars/rds_operation.yml
 Playbook은 실행 시 AWS API로 현재 RDS Endpoint·Port·Master Secret ARN을 자동 조회한다.
 DevOps VM에는 `rds:DescribeDBInstances`, `secretsmanager:GetSecretValue` 권한을 가진 AWS 인증이 필요하다.
 
+### SSH 관리망과 DB 복제 데이터망 분리
+
+Inventory의 `ansible_host`는 Ansible SSH·sudo·백업 fetch에만 사용한다.
+`rds_operation_replication_host`는 On-Prem → RDS 초기 GTID 복제의 Source 주소이며,
+RDS에서 접근 가능한 데이터망 주소를 명시해야 한다.
+
+| 대상 | SSH 관리망 (`ansible_host`) | 복제 데이터망 (`rds_operation_replication_host`) |
+| --- | --- | --- |
+| db-primary | 192.168.14.51 | 192.168.44.51 |
+| db-replica | 192.168.14.52 | 192.168.44.52 |
+
+`onprem_primary`의 복제 주소가 없거나 비어 있으면 Import 전에 중단한다.
+SSH 주소로 자동 대체하지 않는다. 백업 fetch 대상은 같은 inventory 호스트
+`db-primary`를 유지하고, initial-sync marker의 `source_host`에는 데이터망 주소를 기록한다.
+기존 marker의 Source identity 검증도 그대로 유지한다.
+
+이미 예제를 복사한 로컬 `inventory/rds-operation.ini`는 Git pull로 갱신되지 않는다.
+해당 파일의 DB 호스트 행도 위 두 주소로 구분해 수정해야 한다.
+`group_vars/rds_operation.yml`의 비밀번호·승인 값은 덮어쓰지 않는다.
+이 변경은 VPC·VPN·방화벽·DB 역할이나 역복제 토폴로지를 바꾸지 않는다.
+역복제 계정의 `rds_operation_outbound_repl_hosts`도 기존 데이터망
+`192.168.44.51`·`.52`를 유지한다.
+
 On-Prem `db-primary`의 백업 스크립트는 InnoDB 일관성 덤프를 위해
 `mariadb-dump --single-transaction --master-data=2`로 생성되어야 한다.
 `--master-data=2`는 dump 헤더에 주석 형태의 `gtid_slave_pos`를 기록하며, Ansible은
