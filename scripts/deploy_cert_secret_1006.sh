@@ -14,11 +14,14 @@
 # 환경 변수
 #   CP1_HOST   온프렘 kubectl 호스트 SSH 대상 (예: root@<cp1 Mgmt 주소>)
 #   ROSA_HOST  oc 로그인된 호스트 SSH 대상 (10/12 이후)
+#   ROSA_KUBECONFIG  ROSA_HOST에 있는 ROSA 전용 kubeconfig 절대 경로 (rosa·purge-rosa 필수, status는 없으면 ROSA 비교 생략)
+#              기본 kubeconfig가 온프렘 K8s를 가리키므로 지정하지 않으면 중단 (1012 트러블슈팅)
 #
 # 확인 (적용 전, 하나라도 어긋나면 중단)
 #   - 운영 인증서(발급자에 STAGING 없음), SAN 기대값과 정확히 일치, 만료 14일 이상 남음
 #   - 개인 키와 인증서 공개 키 일치, 키 파일 권한 600
 #   - SSH 접속(ConnectTimeout 10), 원격 CLI·namespace 존재
+#   - 대상 클러스터 종류: rosa = route.openshift.io API 있음(OpenShift), onprem = 없음 (같은 namespace 이름이 양쪽에 있어도 오배포 방지)
 #   - 원격 Secret이 이미 있으면: 아래 3조건을 모두 만족할 때만 건너뜀, 아니면 덮어쓰지 않고 중단
 # 원격 Secret 검증 (건너뜀·생성 후 확인·purge 허용 전, PR #46 리뷰)
 #   ① tls.crt·tls.key 모두 존재 ② 원격 인증서 공개 키 = 원격 개인 키 공개 키 (SHA256) ③ 원격 인증서 지문 = 로컬 인증서 지문
@@ -58,7 +61,12 @@ target() {
 }
 load() {  # $1 onprem|rosa → 전역 변수 설정
     IFS='|' read -r CERT HOSTVAR CLI NS SECRET SANS <<<"$(target "$1")"
+    TGT="$1"; CLI_BIN="$CLI"; KC=""
     HOST="${!HOSTVAR:-}"
+    if [[ "$TGT" == rosa ]]; then
+        KC="${ROSA_KUBECONFIG:-}"
+        [[ -z "$KC" ]] || CLI="${CLI_BIN} --kubeconfig=${KC}"
+    fi
     CRT="${BASE}/live/${CERT}/fullchain.pem"
     KEY="${BASE}/live/${CERT}/privkey.pem"
 }
@@ -109,12 +117,35 @@ check_local() {
     log "  지문 SHA256 $(fp_local)"
 }
 
+# rosa용 kubeconfig 변수 확인 → 문제 없으면 빈 문자열, 있으면 사유 출력
+kc_problem() {
+    [[ "$TGT" == rosa ]] || return 0
+    if [[ -z "$KC" ]]; then echo "ROSA_KUBECONFIG 없음 (ROSA 전용 kubeconfig 원격 절대 경로)"
+    elif [[ ! "$KC" =~ ^/[A-Za-z0-9._/-]+$ ]]; then echo "ROSA_KUBECONFIG 경로 형식 오류: ${KC}"
+    fi
+}
+# 대상 클러스터 종류 확인 → 전역 R_SERVER, 맞으면 0 / 다르면 1 (R_MSG에 사유)
+check_cluster() {
+    local apis
+    R_SERVER="$(ssh_t "$CLI config view --minify -o jsonpath='{.clusters[0].cluster.server}'" 2>/dev/null || true)"
+    apis="$(ssh_t "$CLI api-resources --api-group=route.openshift.io -o name" 2>/dev/null || true)"
+    if [[ "$TGT" == rosa && "$apis" != *routes* ]]; then
+        R_MSG="OpenShift 아님 (route.openshift.io API 없음, server=${R_SERVER:-알 수 없음})"; return 1
+    elif [[ "$TGT" == onprem && "$apis" == *routes* ]]; then
+        R_MSG="OpenShift 클러스터에 연결됨 (온프렘 아님, server=${R_SERVER:-알 수 없음})"; return 1
+    fi
+    return 0
+}
+
 check_remote() {
     [[ -n "$HOST" ]] || die "${HOSTVAR} 환경 변수 없음 (예: ${HOSTVAR}=root@<주소> bash $0 ${PHASE})"
+    local p; p="$(kc_problem)"; [[ -z "$p" ]] || die "$p"
     ssh_t true || die "SSH 접속 실패: ${HOST}"
-    ssh_t "command -v $CLI >/dev/null" || die "${HOST}에 ${CLI} 없음"
+    ssh_t "command -v $CLI_BIN >/dev/null" || die "${HOST}에 ${CLI_BIN} 없음"
+    [[ -z "$KC" ]] || ssh_t "test -r $KC" || die "${HOST}: ROSA_KUBECONFIG 파일 없음 또는 읽기 불가 (${KC})"
+    check_cluster || die "${HOST}: 대상 클러스터 불일치 — ${R_MSG}"
     ssh_t "$CLI get namespace $NS >/dev/null 2>&1" || die "${HOST}: namespace ${NS} 없음 또는 권한 없음"
-    log "원격 ${HOST}: ${CLI} OK, namespace ${NS} OK"
+    log "원격 ${HOST}: ${CLI_BIN} OK, 클러스터 ${R_SERVER:-알 수 없음} (${TGT} 확인), namespace ${NS} OK"
 }
 
 secret_yaml() {
@@ -177,8 +208,13 @@ status() {
     for t in onprem rosa; do
         load "$t"
         if [[ -f "$CRT" ]]; then log "${CERT} 로컬: $(fp_local)"; else log "${CERT} 로컬: 없음"; fi
-        if [[ -n "$HOST" ]] && ssh_t true 2>/dev/null; then
-            if [[ -f "$CRT" ]]; then remote_state; log "  원격 ${HOST} ${NS}/${SECRET}: ${R_STATE} ${R_MSG}"; else log "  원격 비교 생략 (로컬 인증서 없음)"; fi
+        local p; p="$(kc_problem)"
+        if [[ -n "$p" ]]; then
+            log "  원격: ${p} → 건너뜀"
+        elif [[ -n "$HOST" ]] && ssh_t true 2>/dev/null; then
+            if ! check_cluster; then log "  원격 ${HOST}: ${R_MSG} → 건너뜀"
+            elif [[ -f "$CRT" ]]; then remote_state; log "  원격 ${HOST} (${R_SERVER}) ${NS}/${SECRET}: ${R_STATE} ${R_MSG}"
+            else log "  원격 비교 생략 (로컬 인증서 없음)"; fi
         else
             log "  원격: ${HOSTVAR} 미설정 또는 접속 불가 → 건너뜀"
         fi
