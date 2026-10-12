@@ -52,9 +52,9 @@
 
 - name: Save selected backup path checksum and GTID
   ansible.builtin.set_fact:
-    rds_operation_seed_sql_gz_onprem: "{{ rds_operation_seed_discovery.stdout.split('\\t')[0] }}"
-    rds_operation_seed_sha256: "{{ rds_operation_seed_discovery.stdout.split('\\t')[1] }}"
-    rds_operation_inbound_gtid_position: "{{ rds_operation_seed_discovery.stdout.split('\\t')[2] }}"
+    rds_operation_seed_sql_gz_onprem: "{{ rds_operation_seed_discovery.stdout.rsplit(none, 2)[0] }}"
+    rds_operation_seed_sha256: "{{ rds_operation_seed_discovery.stdout.rsplit(none, 2)[1] }}"
+    rds_operation_inbound_gtid_position: "{{ rds_operation_seed_discovery.stdout.rsplit(none, 2)[2] }}"
   changed_when: false
 
 - name: Create controller staging directory for selected backup
