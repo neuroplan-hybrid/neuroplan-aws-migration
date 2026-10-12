@@ -13,7 +13,7 @@
     mariadb --protocol=tcp \
       --host="{{ rds_operation_endpoint }}" --port="{{ rds_operation_port }}" \
       --user="{{ rds_operation_master_secret.username }}" --password="$RDS_MASTER_PASSWORD" \
-      --vertical --execute "CALL mysql.rds_show_slave_status;"
+      --vertical --execute "CALL mysql.rds_replica_status;"
   args:
     executable: /bin/bash
   environment:
@@ -25,8 +25,8 @@
 - name: Require zero replication lag at cutover
   ansible.builtin.assert:
     that:
-      - rds_operation_cutover_status.stdout is search('(?m)^[ \\t]*Slave_IO_Running:[ \\t]+Yes[ \\t]*\\r?$')
-      - rds_operation_cutover_status.stdout is search('(?m)^[ \\t]*Slave_SQL_Running:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_cutover_status.stdout is search('(?m)^[ \\t]*(?:Slave|Replica)_IO_Running:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_cutover_status.stdout is search('(?m)^[ \\t]*(?:Slave|Replica)_SQL_Running:[ \\t]+Yes[ \\t]*\\r?$')
       - rds_operation_cutover_status.stdout is search('(?m)^[ \\t]*Seconds_Behind_Master:[ \\t]+0[ \\t]*\\r?$')
     fail_msg: "RDS가 Source를 따라잡지 못했습니다. RDS를 Primary로 전환하지 마세요."
 
