@@ -32,7 +32,10 @@ rds_operation_outbound_repl_username: "rds_to_onprem"
 rds_operation_outbound_repl_password: ""
 rds_operation_outbound_repl_hosts: []
 rds_operation_binlog_retention_hours: 168
-rds_operation_replication_use_ssl: false
+rds_operation_replication_use_ssl: true
+rds_operation_replication_ca_file: "/etc/my.cnf.d/rds-ca/ca-bundle.pem"
+# AWS Seoul bundle verified on 2026-10-13; review checksum when AWS rotates roots.
+rds_operation_replication_ca_sha256: "913fb5b814f17af79d4c1622584a8d0ceddf5b0d76fe353d0c7d1186cdd6b229"
 
 # 초기 RDS inbound Source는 inventory의 onprem_primary에서 자동 해석한다.
 rds_operation_inbound_source_host: ""

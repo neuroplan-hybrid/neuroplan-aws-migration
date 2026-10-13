@@ -1,0 +1,56 @@
+---
+- name: Require verified TLS and a safe CA destination
+  ansible.builtin.assert:
+    that:
+      - rds_operation_replication_use_ssl | bool
+      - rds_operation_aws_region == "ap-northeast-2"
+      - rds_operation_replication_ca_file is match('^/etc/my[.]cnf[.]d/rds-ca/[A-Za-z0-9_.-]+[.]pem$')
+      - rds_operation_replication_ca_sha256 is match('^[a-f0-9]{64}$')
+    fail_msg: "RDS reverse replication requires verified TLS. Override an old local replication_use_ssl=false with true."
+
+- name: Fetch and install the verified AWS RDS CA bundle
+  block:
+    - name: Allocate temporary CA file on the controller
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .rds-ca.pem
+      delegate_to: "{{ groups['rds_controller'][0] }}"
+      become: false
+      register: rds_operation_ca_download
+
+    - name: Download pinned Seoul RDS CA over verified HTTPS on the controller
+      ansible.builtin.get_url:
+        url: "https://truststore.pki.rds.amazonaws.com/ap-northeast-2/ap-northeast-2-bundle.pem"
+        dest: "{{ rds_operation_ca_download.path }}"
+        checksum: "sha256:{{ rds_operation_replication_ca_sha256 }}"
+        validate_certs: true
+        mode: "0600"
+      delegate_to: "{{ groups['rds_controller'][0] }}"
+      become: false
+
+    - name: Create CA directory on the DB
+      ansible.builtin.file:
+        path: "{{ rds_operation_replication_ca_file | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install verified public CA for MariaDB replication
+      ansible.builtin.copy:
+        src: "{{ rds_operation_ca_download.path }}"
+        dest: "{{ rds_operation_replication_ca_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      register: rds_operation_replication_ca_install
+  always:
+    - name: Remove temporary controller CA download
+      ansible.builtin.file:
+        path: "{{ rds_operation_ca_download.path }}"
+        state: absent
+      delegate_to: "{{ groups['rds_controller'][0] }}"
+      become: false
+      when:
+        - rds_operation_ca_download is defined
+        - rds_operation_ca_download.path is defined

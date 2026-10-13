@@ -10,15 +10,14 @@
 
 - name: Build exact expected RDS replica source patterns
   ansible.builtin.set_fact:
-    rds_operation_master_host_pattern: >-
-      {{ '(?m)^[ \\t]*Master_Host:[ \\t]+' ~ (rds_operation_endpoint | regex_escape) ~ '[ \\t]*\\r?$' }}
-    rds_operation_master_port_pattern: >-
-      {{ '(?m)^[ \\t]*Master_Port:[ \\t]+' ~ (rds_operation_port | string | regex_escape) ~ '[ \\t]*\\r?$' }}
+    # Keep regex escapes outside Jinja string literals: Ansible auto-escapes those literals.
+    rds_operation_master_host_pattern: "(?m)^[ \\t]*Master_Host:[ \\t]+{{ rds_operation_endpoint | regex_escape }}[ \\t]*\\r?$"
+    rds_operation_master_port_pattern: "(?m)^[ \\t]*Master_Port:[ \\t]+{{ rds_operation_port | string | regex_escape }}[ \\t]*\\r?$"
   no_log: true
 
 - name: Inspect any existing replica source configuration
   ansible.builtin.shell: |
-    mariadb --protocol=socket --batch --skip-column-names --execute "SHOW SLAVE STATUS\\G"
+    mariadb --protocol=socket --vertical --execute "SHOW SLAVE STATUS;"
   args:
     executable: /bin/bash
   register: rds_operation_existing_slave_status
@@ -38,10 +37,19 @@
       이 DB는 다른 Master를 복제 중입니다. 현재 설정을 지우지 않았습니다.
       정확한 토폴로지 확인 후 rds_operation_allow_reset_replica=true로 명시 승인하세요.
 
+- name: Prepare verified RDS replication TLS before changing DB state
+  ansible.builtin.import_tasks: prepare-replication-tls.yml
+
+- name: Build expected RDS replication TLS status patterns
+  ansible.builtin.set_fact:
+    rds_operation_ssl_ca_pattern: "(?m)^[ \\t]*Master_SSL_CA_File:[ \\t]+{{ rds_operation_replication_ca_file | regex_escape }}[ \\t]*\\r?$"
+    rds_operation_ssl_enabled_pattern: '(?m)^[ \t]*Master_SSL_Allowed:[ \t]+Yes[ \t]*\r?$'
+    rds_operation_ssl_verify_pattern: '(?m)^[ \t]*Master_SSL_Verify_Server_Cert:[ \t]+Yes[ \t]*\r?$'
+
 - name: Configure this On-Prem DB as an RDS GTID replica
   ansible.builtin.shell: |
     set -euo pipefail
-    mariadb --protocol=socket --execute "STOP SLAVE; RESET SLAVE ALL; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_HOST='{{ rds_operation_endpoint }}', MASTER_PORT={{ rds_operation_port | int }}, MASTER_USER='{{ rds_operation_outbound_repl_username }}', MASTER_PASSWORD='$RDS_OPERATION_OUTBOUND_REPL_PASSWORD', MASTER_CONNECT_RETRY=10, MASTER_USE_GTID=slave_pos, MASTER_DEMOTE_TO_SLAVE=1, MASTER_SSL={{ 1 if rds_operation_replication_use_ssl | bool else 0 }}; START SLAVE;"
+    mariadb --protocol=socket --execute "STOP SLAVE; RESET SLAVE ALL; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_HOST='{{ rds_operation_endpoint }}', MASTER_PORT={{ rds_operation_port | int }}, MASTER_USER='{{ rds_operation_outbound_repl_username }}', MASTER_PASSWORD='$RDS_OPERATION_OUTBOUND_REPL_PASSWORD', MASTER_CONNECT_RETRY=10, MASTER_USE_GTID=slave_pos, MASTER_DEMOTE_TO_SLAVE=1, MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1; START SLAVE;"
   args:
     executable: /bin/bash
   environment:
@@ -54,6 +62,22 @@
     )
   no_log: true
 
+- name: Repair TLS on an existing RDS replica without resetting GTID or credentials
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --execute
+      - "STOP SLAVE; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1; START SLAVE;"
+  when:
+    - rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern)
+    - rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern)
+    - >-
+      (rds_operation_replication_ca_install.changed | bool)
+      or not (rds_operation_existing_slave_status.stdout is search(rds_operation_ssl_ca_pattern))
+      or not (rds_operation_existing_slave_status.stdout is search(rds_operation_ssl_enabled_pattern))
+      or not (rds_operation_existing_slave_status.stdout is search(rds_operation_ssl_verify_pattern))
+
 - name: Ensure an already-configured RDS replica is read only and started
   ansible.builtin.command:
     argv:
@@ -65,3 +89,6 @@
     (rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern))
     and (rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern))
   no_log: true
+
+- name: Verify configured RDS replica before moving to the next DB
+  ansible.builtin.import_tasks: verify-onprem-replica.yml

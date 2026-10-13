@@ -1,19 +1,24 @@
 ---
 - name: Build exact expected RDS replica source patterns
   ansible.builtin.set_fact:
-    rds_operation_master_host_pattern: >-
-      {{ '(?m)^[ \\t]*Master_Host:[ \\t]+' ~ (rds_operation_endpoint | regex_escape) ~ '[ \\t]*\\r?$' }}
-    rds_operation_master_port_pattern: >-
-      {{ '(?m)^[ \\t]*Master_Port:[ \\t]+' ~ (rds_operation_port | string | regex_escape) ~ '[ \\t]*\\r?$' }}
+    rds_operation_master_host_pattern: "(?m)^[ \\t]*Master_Host:[ \\t]+{{ rds_operation_endpoint | regex_escape }}[ \\t]*\\r?$"
+    rds_operation_master_port_pattern: "(?m)^[ \\t]*Master_Port:[ \\t]+{{ rds_operation_port | string | regex_escape }}[ \\t]*\\r?$"
+    rds_operation_ssl_ca_pattern: "(?m)^[ \\t]*Master_SSL_CA_File:[ \\t]+{{ rds_operation_replication_ca_file | regex_escape }}[ \\t]*\\r?$"
   no_log: true
 
 - name: Read On-Prem replica status
   ansible.builtin.shell: |
-    mariadb --protocol=socket --batch --skip-column-names --execute "SHOW SLAVE STATUS\\G"
+    mariadb --protocol=socket --vertical --execute "SHOW SLAVE STATUS; SELECT @@GLOBAL.read_only AS Read_Only;"
   args:
     executable: /bin/bash
   register: rds_operation_onprem_replica_status
   changed_when: false
+  retries: 30
+  delay: 2
+  until:
+    - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Slave_IO_Running:[ \\t]+Yes[ \\t]*\\r?$')
+    - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Slave_SQL_Running:[ \\t]+Yes[ \\t]*\\r?$')
+    - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Seconds_Behind_Master:[ \\t]+0[ \\t]*\\r?$')
 
 - name: Require healthy RDS to On-Prem replication
   ansible.builtin.assert:
@@ -23,10 +28,15 @@
       - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Slave_IO_Running:[ \\t]+Yes[ \\t]*\\r?$')
       - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Slave_SQL_Running:[ \\t]+Yes[ \\t]*\\r?$')
       - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Using_Gtid:[ \\t]+Slave_Pos[ \\t]*\\r?$')
+      - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Seconds_Behind_Master:[ \\t]+0[ \\t]*\\r?$')
+      - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Read_Only:[ \\t]+1[ \\t]*\\r?$')
+      - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Master_SSL_Allowed:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Master_SSL_Verify_Server_Cert:[ \\t]+Yes[ \\t]*\\r?$')
+      - rds_operation_onprem_replica_status.stdout is search(rds_operation_ssl_ca_pattern)
       - rds_operation_onprem_replica_status.stdout is not search('(?m)^[ \\t]*Last_IO_Error:[ \\t]*\\S')
       - rds_operation_onprem_replica_status.stdout is not search('(?m)^[ \\t]*Last_SQL_Error:[ \\t]*\\S')
     fail_msg: "On-Prem DB가 정상적인 RDS Replica가 아닙니다. DR Drill을 진행하지 마세요."
 
 - name: Display sanitized replica result
   ansible.builtin.debug:
-    msg: "{{ inventory_hostname }}: RDS replica healthy (IO=Yes, SQL=Yes)."
+    msg: "{{ inventory_hostname }}: RDS replica healthy (IO=Yes, SQL=Yes, lag=0, read_only=1, TLS verified)."

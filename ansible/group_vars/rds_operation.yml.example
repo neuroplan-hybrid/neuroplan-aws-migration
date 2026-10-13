@@ -26,7 +26,9 @@ rds_operation_outbound_repl_hosts:
   - "192.168.44.51"
   - "192.168.44.52"
 rds_operation_binlog_retention_hours: 168
-rds_operation_replication_use_ssl: false
+rds_operation_replication_use_ssl: true
+# Download on the controller and copy to DBs; DB Internet access is not required.
+rds_operation_replication_ca_file: "/etc/my.cnf.d/rds-ca/ca-bundle.pem"
 
 # 초기 이관 중 On-Prem Source 계정.
 # Source 주소는 inventory onprem_primary의 rds_operation_replication_host에서 해석한다.
