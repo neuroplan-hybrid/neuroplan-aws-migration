@@ -51,7 +51,7 @@ rds_apply_immediately          = true
 
 # RDS CloudWatch Alarm / SNS 이메일
 # RDS 알람·SNS Topic·이벤트 구독만 추가되는지 기존 State에서 Plan 검토 후 승인된 Apply만 수행.
-# 이 변경은 현재 적용 대상인 rosa-on 단계에 한정하며 operation.tfvars는 별도 승인 없이 변경하지 않는다.
+# #94 팀 리뷰 합의: operation.tfvars도 같은 활성화·임계값을 유지해 후속 Apply 시 알람 삭제를 방지한다.
 # Apply 후 출력되는 SNS Topic ARN으로 이메일 구독을 별도 등록·승인한다.
 enable_rds_cloudwatch_alarms = true
 # 운영 RDS 실측 max_connections=30 (2026-10-13), 한도의 80%에서 사전 경고.
