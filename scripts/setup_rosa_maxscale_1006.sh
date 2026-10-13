@@ -138,7 +138,8 @@ phase_verify() {  # 적용된 상태 검증 — 하나라도 어긋나면 1 (fai
         rt="$(firewall-cmd --policy="$POLICY" --list-rich-rules 2>/dev/null | sort || true)"
         if [[ "$rt" == "$(expected_infra)" ]]; then log "  [OK]   runtime = permanent"
         else log "  [FAIL] runtime 규칙이 permanent와 다름 (reload 필요?)"; fail=$((fail+1)); fi
-        n="$(nft list ruleset 2>/dev/null | grep -c "${MAXSCALE_IP} tcp dport ${PORT}" || true)"
+        # nft 렌더링 예: "ip daddr 192.168.44.21 ip saddr 10.20.16.0/20 tcp dport 4006 accept" (daddr와 dport 사이에 saddr가 들어감, 10/13 실측)
+        n="$(nft list ruleset 2>/dev/null | grep -cE "ip daddr ${MAXSCALE_IP//./\\.} .*tcp dport ${PORT}( |$)" || true)"
         if [[ "$n" == "3" ]]; then log "  [OK]   nft 반영 규칙 3개"
         else log "  [FAIL] nft 반영 규칙 ${n}개 (기대 3)"; fail=$((fail+1)); fi
     else
