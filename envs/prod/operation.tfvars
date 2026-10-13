@@ -45,8 +45,11 @@ rds_final_snapshot_identifier = "neuroplan-rds-operation-final-20261020"
 rds_auto_minor_version_upgrade = false
 rds_apply_immediately          = true
 
-# rosa-on.tfvars와 같은 값으로 유지한다. 활성화는 별도 Plan·승인 후 진행한다.
-enable_rds_cloudwatch_alarms = false
+# #94 합의: rosa-on.tfvars와 동일한 RDS 알람 설정을 유지해 후속 operation Apply 시 삭제를 방지한다.
+# CloudWatch Alarm / SNS 실제 적용은 별도 최종 Plan·승인 후 진행한다.
+enable_rds_cloudwatch_alarms = true
+# 운영 RDS 실측 max_connections=30 (2026-10-13)의 80%에서 사전 경고.
+rds_database_connections_alarm_threshold = 24
 
 # Managed Grafana (#98): AMG → VPN → Monitoring VM /32:9090 경로 + AMG SG. ROSA 운영 기간 검증, 10/16 이후 유지 여부는 별도 결정
 enable_amg_onprem_prometheus = true

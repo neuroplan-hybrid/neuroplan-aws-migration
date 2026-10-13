@@ -50,10 +50,12 @@ rds_auto_minor_version_upgrade = false
 rds_apply_immediately          = true
 
 # RDS CloudWatch Alarm / SNS 이메일
-# 10/12 RDS 생성 전에는 false를 유지하고, 수신자 확정 후 별도 Plan·승인으로 켠다.
-# 활성화할 때 operation.tfvars에도 같은 값을 반영한다.
+# RDS 알람·SNS Topic·이벤트 구독만 추가되는지 기존 State에서 Plan 검토 후 승인된 Apply만 수행.
+# #94 팀 리뷰 합의: operation.tfvars도 같은 활성화·임계값을 유지해 후속 Apply 시 알람 삭제를 방지한다.
 # Apply 후 출력되는 SNS Topic ARN으로 이메일 구독을 별도 등록·승인한다.
-enable_rds_cloudwatch_alarms = false
+enable_rds_cloudwatch_alarms = true
+# 운영 RDS 실측 max_connections=30 (2026-10-13), 한도의 80%에서 사전 경고.
+rds_database_connections_alarm_threshold = 24
 
 # Managed Grafana (#98): AMG → VPN → Monitoring VM /32:9090 경로 + AMG SG. ROSA 운영 기간 검증, 10/16 이후 유지 여부는 별도 결정
 enable_amg_onprem_prometheus = true
