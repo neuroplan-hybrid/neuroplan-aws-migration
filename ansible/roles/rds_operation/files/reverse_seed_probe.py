@@ -18,6 +18,16 @@ def identifier(value):
     return '`' + value.replace('`', '``') + '`'
 
 
+def switch_value(value):
+    """MariaDB boolean system variables may render as ON/OFF or 1/0."""
+    normalized = str(value).strip().upper()
+    if normalized in ('1', 'ON'):
+        return 1
+    if normalized in ('0', 'OFF'):
+        return 0
+    raise ValueError('Invalid MariaDB boolean system variable')
+
+
 def gtid_map(value):
     result = {}
     for item in value.split(',') if value else []:
@@ -137,8 +147,8 @@ def snapshot(args):
     if not output[1].startswith('WRITERS|'):
         raise ValueError('Malformed snapshot header')
     result = {'database': db, 'gtid': gtid, 'applied_gtid': applied,
-              'read_only': int(read_only), 'log_bin': int(log_bin),
-              'log_slave_updates': int(log_slave_updates), 'active_writers': int(output[1].split('|')[1]),
+              'read_only': switch_value(read_only), 'log_bin': switch_value(log_bin),
+              'log_slave_updates': switch_value(log_slave_updates), 'active_writers': int(output[1].split('|')[1]),
               'tables': {}, 'oldest_gtid': ''}
     groups, index = {}, None
     for row in output[2:]:

@@ -20,6 +20,15 @@ def snapshot(gtid='0-1822967101-448,1-1-3076'):
 
 
 class ReverseSeedTests(unittest.TestCase):
+    def test_boolean_variables_accept_numeric_and_on_off_but_reject_unknown(self):
+        for value, expected in [('0', 0), ('1', 1), ('OFF', 0), ('ON', 1),
+                                (' off ', 0), (' on ', 1), (0, 0), (1, 1)]:
+            with self.subTest(value=value):
+                self.assertEqual(PROBE.switch_value(value), expected)
+        for value in ['', 'NULL', '2', 'enabled', None]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                PROBE.switch_value(value)
+
     def test_actual_1236_missing_domain_zero_can_choose_compared_full_boundary(self):
         before, local, after = snapshot(), snapshot('1-1-3076'), snapshot('0-1822967101-449,1-1-3076')
         result = PROBE.compare(before, local, after)
@@ -106,7 +115,7 @@ class ReverseSeedTests(unittest.TestCase):
             elif 'information_schema.COLUMNS' in query:
                 stdout = 'id\tint(11)\t\t\tNO\t\n'
             elif 'START TRANSACTION' in query:
-                stdout = 'META|0-9-448,1-1-3076|1-1-3076|0|1|1\nWRITERS|0\nTABLE|0\nV31\nV32\n'
+                stdout = 'META|0-9-448,1-1-3076|1-1-3076|OFF|ON|ON\nWRITERS|0\nTABLE|0\nV31\nV32\n'
             elif 'SHOW BINARY LOGS' in query:
                 stdout = 'mysql-bin-changelog.000317\t773\n'
             elif 'SHOW BINLOG EVENTS' in query:
@@ -121,6 +130,7 @@ class ReverseSeedTests(unittest.TestCase):
             result = PROBE.snapshot(args)
         self.assertEqual(result['tables']['users']['rows'], 2)
         self.assertEqual(result['oldest_gtid'], '0-9-428,1-1-3076')
+        self.assertEqual((result['read_only'], result['log_bin'], result['log_slave_updates']), (0, 1, 1))
         for argv, kwargs in calls:
             self.assertNotIn('NEVER_IN_ARGV', ' '.join(argv))
             self.assertIn('--ssl-verify-server-cert', argv)
