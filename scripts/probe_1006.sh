@@ -10,6 +10,7 @@
 #   bash scripts/probe_1006.sh run         # Ctrl+C까지 1초마다 기록 → probe_<MMDD-HHMM>.csv
 #   (같은 변수로) bash scripts/probe_1006.sh run 300   # 300초만 기록
 #   bash probe_1006.sh summary <csv> [T0]  # 요약. T0(HH:MM:SS, 장애 주입 시각)를 주면 Control RTO·Probe Recovery 계산
+#   bash probe_1006.sh weights <csv> <ROSA%>  # Weighted 단계 분포 확인 (예: 10/90이면 10) → 권한 DNS 비율·95% 구간·판정
 #
 # 매초 기록 (정각 초에 시작, 병렬 실행, 모든 요청에 TIMEOUT → 한 줄이 1초를 넘지 않게)
 #   ip_auth/site_auth         : 권한 네임서버(awsdns) 직접 조회 IP·사이트 → Route 53 판단이 바뀐 시각 (Control RTO)
@@ -36,7 +37,7 @@ TIMEOUT="${TIMEOUT:-0.9}"               # 요청 하나의 최대 시간(초), 1
 OUT_DIR="${OUT_DIR:-.}"
 HEADER="ts,epoch_ms,ip_auth,site_auth,ip_resolver,site_resolver,app_code,app_ms,app_ip,app_site,dr_code,dr_ms,rosa_code,rosa_ms,write_code,write_seq,write_ms"
 
-usage() { echo "사용법: bash $0 run [초] | summary <csv> [T0 HH:MM:SS]" >&2; exit 1; }
+usage() { echo "사용법: bash $0 run [초] | summary <csv> [T0 HH:MM:SS] | weights <csv> <ROSA%>" >&2; exit 1; }
 
 check_lb() {  # $1 변수 이름, $2 값, $3 required|optional → 비었거나 ELB DNS 형식이 아니면 중단
     if [[ -z "$2" ]]; then
@@ -171,8 +172,43 @@ do_summary() {
     }' "$csv"
 }
 
+# Weighted 단계(0/100 → 10/90 → 50/50) 분포 확인 (1013 추가)
+# 권한 DNS는 질의마다 가중치대로 레코드를 고르므로 site_auth 비율이 설정 가중치를 따라야 함 (주 판정)
+# app_site는 Resolver 캐시(Alias TTL)를 거치므로 비율이 덜 고르게 나옴 → 참고값
+# 판정: ROSA 비율의 95% 구간(정규 근사)에 기대값이 들어가면 PASS. 표본이 적으면(30 미만) 판정 보류
+do_weights() {
+    local csv="${1:-}" exp="${2:-}"
+    [[ -f "$csv" ]] || usage
+    [[ "$(head -1 "$csv")" == "$HEADER" ]] || { echo "CSV 헤더가 현재 형식과 다름 (${csv})" >&2; exit 1; }
+    [[ "$exp" =~ ^([0-9]|[1-9][0-9]|100)$ ]] || { echo "기대 ROSA 가중치(%)를 0~100 정수로 지정 — 예: bash $0 weights ${csv} 10" >&2; exit 1; }
+    awk -F, -v want="$exp" '
+    NR==1 { for (i = 1; i <= NF; i++) c[$i] = i; next }
+    { rows++; sa = $c["site_auth"]; as = $c["app_site"]
+      if (sa == "rosa") ar++; else if (sa == "onprem") ao++; else aother++
+      if (as == "rosa") pr++; else if (as == "onprem") po++; else pother++
+      if (rows == 1) first = $1; last = $1 }
+    function line(name, r, o, x,   n, p, h) {
+      n = r + o
+      if (n == 0) { printf "%-22s rosa=0 onprem=0 기타=%d → 표본 없음\n", name, x; return }
+      p = r / n; h = 1.96 * sqrt(p * (1 - p) / n) * 100
+      printf "%-22s rosa=%d onprem=%d 기타=%d → ROSA %.1f%% (95%% 구간 %.1f~%.1f%%)\n", name, r, o, x, p*100, (p*100-h < 0 ? 0 : p*100-h), (p*100+h > 100 ? 100 : p*100+h)
+    }
+    END {
+      printf "구간 %s ~ %s, %d행, 기대 ROSA %d%% / 온프렘 %d%%\n", first, last, rows, want, 100-want
+      line("권한 DNS (주 판정)", ar, ao, aother)
+      line("app 실제 연결 (참고)", pr, po, pother)
+      n = ar + ao
+      if (n < 30) { print "판정: 보류 (권한 DNS 표본 30 미만 → 측정 시간 늘리기)"; exit 0 }
+      p = ar / n * 100; h = 1.96 * sqrt((ar/n) * (1 - ar/n) / n) * 100
+      if (want == 0 || want == 100) ok = ((want == 0 && ar == 0) || (want == 100 && ao == 0))
+      else ok = (want >= p - h && want <= p + h)
+      printf "판정: %s (권한 DNS ROSA 비율 기준%s)\n", (ok ? "PASS" : "확인 필요"), (want == 0 || want == 100 ? ", 0/100은 반대쪽 0건이어야 함" : "")
+    }' "$csv"
+}
+
 case "${1:-}" in
     run)     do_run "${2:-0}" ;;
     summary) do_summary "${2:-}" "${3:-}" ;;
+    weights) do_weights "${2:-}" "${3:-}" ;;
     *)       usage ;;
 esac
