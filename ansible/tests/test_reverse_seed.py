@@ -151,6 +151,24 @@ class ReverseSeedTests(unittest.TestCase):
         self.assertIn('rds_reverse_baseline.baseline_gtid', apply['ansible.builtin.command']['argv'][-1])
         self.assertNotIn('RESET', apply['ansible.builtin.command']['argv'][-1])
 
+    def test_guard_patterns_are_facts_not_escaped_jinja_literals(self):
+        import re
+        import yaml
+        path = PATH.parents[1] / 'tasks/configure-onprem-replica.yml'
+        tasks = yaml.safe_load(path.read_text(encoding='utf8'))
+        facts = next(t['ansible.builtin.set_fact'] for t in tasks
+                     if t['name'] == 'Build reverse-seed guard patterns outside Jinja string literals')
+        self.assertRegex('\tSlave_IO_Running: Connecting\r\n', facts['rds_reverse_io_active_pattern'])
+        self.assertIsNone(re.search(facts['rds_reverse_sql_error_pattern'], ' Last_SQL_Error: \n Last_IO_Error: \n'))
+        self.assertRegex(' Last_SQL_Error: Duplicate entry\n', facts['rds_reverse_sql_error_pattern'])
+        self.assertRegex(' Replicate_Ignore_DB: mysql\n', facts['rds_reverse_conflict_pattern'])
+        self.assertEqual([x.strip() for x in re.findall(facts['rds_reverse_db_filter_pattern'], '\tReplicate_Do_DB: infraready\r\n')], ['infraready'])
+        self.assertTrue(all("search('" not in str(t) and "regex_findall('" not in str(t)
+                            for t in tasks if t['name'] in {
+                                'Reject GTID recovery on a running or unhealthy SQL replica',
+                                'Require frozen writes and reject conflicting existing replication filters',
+                                'Apply application-only filters with replication threads stopped'}))
+
 
 if __name__ == '__main__':
     unittest.main()

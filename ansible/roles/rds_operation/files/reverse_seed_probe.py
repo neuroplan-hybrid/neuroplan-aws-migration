@@ -109,7 +109,8 @@ def snapshot(args):
     if not tables:
         raise ValueError('No application tables')
     manifest = {}
-    queries = ["START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY;",
+    queries = ["SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;",
+               "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY;",
                "SELECT CONCAT('META|',@@global.gtid_current_pos,'|',@@global.gtid_slave_pos,'|',"
                "@@global.read_only,'|',@@global.log_bin,'|',@@global.log_slave_updates);",
                "SELECT CONCAT('WRITERS|',COUNT(*)) FROM information_schema.INNODB_TRX "
