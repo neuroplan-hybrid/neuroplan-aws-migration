@@ -45,6 +45,8 @@ rds_operation_socket: "/var/lib/mysql/mysql.sock"
 # 안전장치 기본값
 rds_operation_execute_mutations: false
 rds_operation_allow_reset_replica: false
+# Do not set globally. Enable per approved frozen reverse-seed recovery only.
+rds_operation_reverse_seed_recovery_approved: false
 # Cutover 실행 의도를 명시하는 단일 승인 플래그다.
 rds_operation_cutover_approved: false
 rds_operation_dr_writes_fenced: false

@@ -25,6 +25,7 @@ def context(stdout):
     return {
         "rds_operation_endpoint": ENDPOINT,
         "rds_operation_port": 3306,
+        "rds_operation_database": "infraready",
         "rds_operation_replication_ca_file": "/etc/my.cnf.d/rds-ca/ca-bundle.pem",
         "rds_operation_inbound_status": result,
         "rds_operation_cutover_status": result,
@@ -63,6 +64,8 @@ def status(indent="    ", newline="\n", **overrides):
         "Master_SSL_CA_File": "/etc/my.cnf.d/rds-ca/ca-bundle.pem",
         "Master_SSL_Verify_Server_Cert": "Yes",
         "Read_Only": "1",
+        "Replicate_Do_DB": "infraready",
+        "Replicate_Wild_Do_Table": "infraready.%",
     }
     fields.update(overrides)
     return newline.join(
@@ -125,6 +128,8 @@ class OnPremReplicaTests(unittest.TestCase):
             {"Master_SSL_CA_File": ""},
             {"Master_SSL_CA_File": "/wrong/ca.pem"},
             {"Master_SSL_Verify_Server_Cert": "No"},
+            {"Replicate_Do_DB": ""},
+            {"Replicate_Wild_Do_Table": "mysql.%"},
         )
         for values in cases:
             with self.subTest(values=values):

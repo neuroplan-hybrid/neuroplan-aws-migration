@@ -47,6 +47,9 @@ rds_operation_inbound_repl_hosts: []
 rds_operation_socket: "/var/lib/mysql/mysql.sock"
 rds_operation_execute_mutations: false
 rds_operation_allow_reset_replica: false
+# Explicit approval for changing the reverse-replica GTID boundary after a fresh
+# all-table comparison. Never use a saved marker or a hand-written GTID value.
+rds_operation_reverse_seed_recovery_approved: false
 # Cutover 실행 의도를 명시하는 단일 승인 플래그다.
 rds_operation_cutover_approved: false
 rds_operation_dr_writes_fenced: false
