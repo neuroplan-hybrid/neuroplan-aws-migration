@@ -8,9 +8,6 @@ enable_rds           = true
 rds_mode             = "operation"
 enable_nat           = true
 enable_dr_nlb        = true
-
-# Managed Grafana (#98): AMG → VPN → Monitoring VM /32:9090 경로 + AMG SG. ROSA 운영 기간 검증, 10/16 이후 유지 여부는 별도 결정
-enable_amg_onprem_prometheus = true
 route53_routing_mode = "off" # TODO(10/13): "weighted" — LB DNS 입력과 같은 커밋에서만 전환 (#33, PR #49 리뷰 B안)
 
 # Route 53 Weighted (전환 검증, B안): 시작 ROSA 0 / 온프렘 100 → 이후 가중치만 바꾸는 tfvars PR로 10/90 → 50/50
@@ -55,3 +52,6 @@ rds_apply_immediately          = true
 # 활성화할 때 operation.tfvars에도 같은 값을 반영한다.
 # Apply 후 출력되는 SNS Topic ARN으로 이메일 구독을 별도 등록·승인한다.
 enable_rds_cloudwatch_alarms = false
+
+# Managed Grafana (#98): AMG → VPN → Monitoring VM /32:9090 경로 + AMG SG. ROSA 운영 기간 검증, 10/16 이후 유지 여부는 별도 결정
+enable_amg_onprem_prometheus = true
