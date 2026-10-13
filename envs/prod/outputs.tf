@@ -113,3 +113,13 @@ output "rds_cloudwatch_alarm_names" {
   value       = try(module.data[0].cloudwatch_alarm_names, [])
 }
 
+# ---------- Managed Grafana (#98) ----------
+output "amg_security_group_id" {
+  description = "AMG 워크스페이스 VPC 연결에 지정할 Security Group (enable_amg_onprem_prometheus=false면 null)"
+  value       = try(aws_security_group.amg[0].id, null)
+}
+
+output "amg_subnet_ids" {
+  description = "AMG VPC 연결용 서브넷 후보 = Private ROSA 서브넷 (RT에 NAT·VGW·S3 GW 경로 있음, 2개 AZ 이상 선택)"
+  value       = module.network.private_rosa_subnet_ids
+}

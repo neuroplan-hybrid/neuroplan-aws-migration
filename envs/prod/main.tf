@@ -29,6 +29,9 @@ module "hybrid" {
   route_table_ids = module.network.route_table_ids
   enable_vpn      = var.enable_vpn
 
+  # 기본 2개(DMZ·Data) + #98 Managed Grafana용 Monitoring VM /32 (enable_amg_onprem_prometheus, amg.tf)
+  onprem_cidrs = local.hybrid_onprem_cidrs
+
   # null이면 AWS가 생성. 고정하려면 TF_VAR_vpn_tunnel1_preshared_key 로 전달 (IaC 가이드 5.1)
   tunnel1_preshared_key = var.vpn_tunnel1_preshared_key
   tunnel2_preshared_key = var.vpn_tunnel2_preshared_key
