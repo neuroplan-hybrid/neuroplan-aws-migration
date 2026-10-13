@@ -306,3 +306,11 @@ variable "ecr_force_delete" {
   type        = bool
   default     = true
 }
+
+# Managed Grafana (#98): AMG → VPN → 온프렘 Prometheus(Monitoring VM /32:9090) 경로와 AMG ENI용 SG
+# 새 NAT·Endpoint·VPN 없이 기존 자원 재사용. ROSA 운영 기간 검증용 (10/16 이후 유지 여부는 별도 결정)
+variable "enable_amg_onprem_prometheus" {
+  description = "true면 VPN 정적 경로·RT 경로에 Monitoring VM /32 추가 + AMG용 Security Group 생성"
+  type        = bool
+  default     = false
+}

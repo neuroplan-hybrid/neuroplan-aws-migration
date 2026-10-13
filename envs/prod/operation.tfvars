@@ -8,6 +8,9 @@ enable_rds           = true
 rds_mode             = "operation"
 enable_nat           = true
 enable_dr_nlb        = true
+
+# Managed Grafana (#98): AMG → VPN → Monitoring VM /32:9090 경로 + AMG SG. ROSA 운영 기간 검증, 10/16 이후 유지 여부는 별도 결정
+enable_amg_onprem_prometheus = true
 route53_routing_mode = "off" # TODO(10/13): "weighted" — rosa-on과 같은 커밋에서 LB DNS와 함께 전환
 
 # Route 53 운영 (B안 active-passive): ROSA 1 / 온프렘 0 — ROSA 레코드가 모두 unhealthy일 때만 온프렘(DR NLB) 응답
