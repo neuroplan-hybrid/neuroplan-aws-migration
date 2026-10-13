@@ -23,7 +23,7 @@
       RDS Endpoint와 Port가 필요합니다.
   when:
     - rds_operation_node_role == "onprem_replica"
-    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica"]
+    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica", "check-reverse-seed"]
   tags: [always]
 
 - name: Use the RDS connection discovered by the controller on On-Prem replicas
@@ -34,7 +34,7 @@
       {{ hostvars[groups["rds_controller"][0]].rds_operation_port | int }}
   when:
     - rds_operation_node_role == "onprem_replica"
-    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica"]
+    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica", "check-reverse-seed"]
   no_log: true
   tags: [always]
 
@@ -46,7 +46,7 @@
     fail_msg: "On-Prem Replica 작업에 사용할 RDS Endpoint 또는 Port가 비어 있습니다."
   when:
     - rds_operation_node_role == "onprem_replica"
-    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica"]
+    - rds_operation_run_mode in ["preflight", "configure-onprem-replica", "verify-onprem-replica", "check-reverse-seed"]
   tags: [always]
 
 - name: Run controller preflight
@@ -139,6 +139,13 @@
     - rds_operation_node_role == "onprem_replica"
     - rds_operation_run_mode == "configure-onprem-replica"
   tags: [configure-onprem-replica]
+
+- name: Check reverse-seed data and GTID boundary without changing replication
+  ansible.builtin.import_tasks: check-reverse-seed.yml
+  when:
+    - rds_operation_node_role == "onprem_replica"
+    - rds_operation_run_mode == "check-reverse-seed"
+  tags: [check-reverse-seed]
 
 - name: Verify On-Prem RDS replica
   ansible.builtin.import_tasks: verify-onprem-replica.yml

@@ -23,6 +23,14 @@
   register: rds_operation_existing_slave_status
   changed_when: false
 
+- name: Build reverse-seed guard patterns outside Jinja string literals
+  ansible.builtin.set_fact:
+    rds_reverse_io_active_pattern: '(?m)^[ \t]*Slave_IO_Running:[ \t]+(?:Yes|Connecting)[ \t]*\r?$'
+    rds_reverse_sql_error_pattern: '(?m)^[ \t]*Last_SQL_Error:[ \t]*\S'
+    rds_reverse_conflict_pattern: '(?m)^[ \t]*Replicate_(?:Ignore_DB|Do_Table|Ignore_Table|Wild_Ignore_Table|Rewrite_DB|Do_Domain_Ids|Ignore_Domain_Ids):[ \t]*\S'
+    rds_reverse_db_filter_pattern: '(?m)^[ \t]*Replicate_Do_DB:[ \t]*(.*)$'
+    rds_reverse_table_filter_pattern: '(?m)^[ \t]*Replicate_Wild_Do_Table:[ \t]*(.*)$'
+
 - name: Reject replacement of an unexpected existing replica source
   ansible.builtin.assert:
     that:
@@ -40,6 +48,85 @@
 - name: Prepare verified RDS replication TLS before changing DB state
   ansible.builtin.import_tasks: prepare-replication-tls.yml
 
+- name: Require a fresh approved baseline for a new or replaced replica source
+  ansible.builtin.assert:
+    that:
+      - rds_operation_reverse_seed_recovery_approved | bool
+    fail_msg: "새 Source 연결은 check-reverse-seed 확인 후 reverse_seed_recovery_approved=true 승인이 필요합니다."
+  when: >-
+    (rds_operation_existing_slave_status.stdout | trim | length == 0)
+    or not (
+      (rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern))
+      and (rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern))
+    )
+
+- name: Reject GTID recovery on a running or unhealthy SQL replica
+  ansible.builtin.assert:
+    that:
+      - rds_operation_existing_slave_status.stdout is not search(rds_reverse_io_active_pattern)
+      - rds_operation_existing_slave_status.stdout is not search(rds_reverse_sql_error_pattern)
+    fail_msg: "GTID 복구는 IO 중지 및 SQL 오류 없음 확인 후만 가능합니다. 정상 복제의 시작점을 덮어쓰지 않습니다."
+  when: rds_operation_reverse_seed_recovery_approved | bool
+
+- name: Stop replica threads before an approved baseline comparison
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --execute
+      - "STOP SLAVE;"
+  when: rds_operation_reverse_seed_recovery_approved | bool
+
+- name: Compare full application data before any approved GTID baseline change
+  ansible.builtin.import_tasks: check-reverse-seed.yml
+  when: rds_operation_reverse_seed_recovery_approved | bool
+
+- name: Require frozen writes and reject conflicting existing replication filters
+  ansible.builtin.assert:
+    that:
+      - rds_operation_dr_writes_fenced | bool
+      - rds_operation_database is match('^[A-Za-z0-9]+$')
+      - >-
+        rds_operation_existing_slave_status.stdout is not search(rds_reverse_conflict_pattern)
+      - >-
+        (rds_operation_existing_slave_status.stdout | regex_findall(rds_reverse_db_filter_pattern) | map('trim') | list) in [[], [''], [rds_operation_database]]
+      - >-
+        (rds_operation_existing_slave_status.stdout | regex_findall(rds_reverse_table_filter_pattern) | map('trim') | list) in [[], [''], [rds_operation_database ~ '.%']]
+    fail_msg: "쓰기 동결 또는 복제 필터 충돌을 확인하세요. 기존의 다른 필터를 자동으로 지우지 않습니다."
+
+- name: Persist application-only reverse replication filters without restarting MariaDB
+  ansible.builtin.copy:
+    dest: /etc/my.cnf.d/neuroplan-rds-replication.cnf
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+    content: |
+      # RDS internal tables/accounts are not part of the DR application replica.
+      [mariadb]
+      replicate_do_db={{ rds_operation_database }}
+      replicate_wild_do_table={{ rds_operation_database }}.%
+
+- name: Apply application-only filters with replication threads stopped
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --execute
+      - "STOP SLAVE; SET GLOBAL replicate_do_db='{{ rds_operation_database }}'; SET GLOBAL replicate_wild_do_table='{{ rds_operation_database }}.%';"
+  when: >-
+    (rds_operation_existing_slave_status.stdout | regex_findall(rds_reverse_db_filter_pattern) | map('trim') | list) != [rds_operation_database]
+    or (rds_operation_existing_slave_status.stdout | regex_findall(rds_reverse_table_filter_pattern) | map('trim') | list) != [rds_operation_database ~ '.%']
+
+- name: Apply freshly compared reverse-seed GTID only with explicit recovery approval
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --execute
+      - "SET GLOBAL gtid_slave_pos='{{ rds_reverse_baseline.baseline_gtid }}';"
+  when: rds_operation_reverse_seed_recovery_approved | bool
+
 - name: Build expected RDS replication TLS status patterns
   ansible.builtin.set_fact:
     rds_operation_ssl_ca_pattern: "(?m)^[ \\t]*Master_SSL_CA_File:[ \\t]+{{ rds_operation_replication_ca_file | regex_escape }}[ \\t]*\\r?$"
@@ -49,7 +136,7 @@
 - name: Configure this On-Prem DB as an RDS GTID replica
   ansible.builtin.shell: |
     set -euo pipefail
-    mariadb --protocol=socket --execute "STOP SLAVE; RESET SLAVE ALL; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_HOST='{{ rds_operation_endpoint }}', MASTER_PORT={{ rds_operation_port | int }}, MASTER_USER='{{ rds_operation_outbound_repl_username }}', MASTER_PASSWORD='$RDS_OPERATION_OUTBOUND_REPL_PASSWORD', MASTER_CONNECT_RETRY=10, MASTER_USE_GTID=slave_pos, MASTER_DEMOTE_TO_SLAVE=1, MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1; START SLAVE;"
+    mariadb --protocol=socket --execute "STOP SLAVE; RESET SLAVE ALL; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_HOST='{{ rds_operation_endpoint }}', MASTER_PORT={{ rds_operation_port | int }}, MASTER_USER='{{ rds_operation_outbound_repl_username }}', MASTER_PASSWORD='$RDS_OPERATION_OUTBOUND_REPL_PASSWORD', MASTER_CONNECT_RETRY=10, MASTER_USE_GTID=slave_pos, MASTER_DEMOTE_TO_SLAVE=1, MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1;"
   args:
     executable: /bin/bash
   environment:
@@ -68,7 +155,7 @@
       - mariadb
       - --protocol=socket
       - --execute
-      - "STOP SLAVE; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1; START SLAVE;"
+      - "STOP SLAVE; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1;"
   when:
     - rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern)
     - rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern)
@@ -78,16 +165,33 @@
       or not (rds_operation_existing_slave_status.stdout is search(rds_operation_ssl_enabled_pattern))
       or not (rds_operation_existing_slave_status.stdout is search(rds_operation_ssl_verify_pattern))
 
-- name: Ensure an already-configured RDS replica is read only and started
+- name: Read applied GTID after source configuration and before replica start
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --batch
+      - --skip-column-names
+      - --execute
+      - "SELECT @@GLOBAL.gtid_slave_pos;"
+  register: rds_reverse_configured_gtid
+  changed_when: false
+  when: rds_operation_reverse_seed_recovery_approved | bool
+
+- name: Require approved GTID preserved after CHANGE MASTER before START SLAVE
+  ansible.builtin.assert:
+    that:
+      - (rds_reverse_configured_gtid.stdout | trim) == rds_reverse_baseline.baseline_gtid
+    fail_msg: "CHANGE MASTER 이후 GTID가 승인된 전체 비교 기준점과 다릅니다. 복제는 시작하지 않았습니다. 쓰기 동결을 유지하고 원인을 확인하세요."
+  when: rds_operation_reverse_seed_recovery_approved | bool
+
+- name: Ensure a configured RDS replica is read only and started
   ansible.builtin.command:
     argv:
       - mariadb
       - --protocol=socket
       - --execute
       - "SET GLOBAL read_only = ON; START SLAVE;"
-  when: >-
-    (rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern))
-    and (rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern))
   no_log: true
 
 - name: Verify configured RDS replica before moving to the next DB

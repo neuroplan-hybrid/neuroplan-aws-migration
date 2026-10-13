@@ -4,6 +4,8 @@
     rds_operation_master_host_pattern: "(?m)^[ \\t]*Master_Host:[ \\t]+{{ rds_operation_endpoint | regex_escape }}[ \\t]*\\r?$"
     rds_operation_master_port_pattern: "(?m)^[ \\t]*Master_Port:[ \\t]+{{ rds_operation_port | string | regex_escape }}[ \\t]*\\r?$"
     rds_operation_ssl_ca_pattern: "(?m)^[ \\t]*Master_SSL_CA_File:[ \\t]+{{ rds_operation_replication_ca_file | regex_escape }}[ \\t]*\\r?$"
+    rds_operation_filter_db_pattern: "(?m)^[ \\t]*Replicate_Do_DB:[ \\t]+{{ rds_operation_database | regex_escape }}[ \\t]*\\r?$"
+    rds_operation_filter_table_pattern: "(?m)^[ \\t]*Replicate_Wild_Do_Table:[ \\t]+{{ (rds_operation_database ~ '.%') | regex_escape }}[ \\t]*\\r?$"
   no_log: true
 
 - name: Read On-Prem replica status
@@ -33,6 +35,8 @@
       - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Master_SSL_Allowed:[ \\t]+Yes[ \\t]*\\r?$')
       - rds_operation_onprem_replica_status.stdout is search('(?m)^[ \\t]*Master_SSL_Verify_Server_Cert:[ \\t]+Yes[ \\t]*\\r?$')
       - rds_operation_onprem_replica_status.stdout is search(rds_operation_ssl_ca_pattern)
+      - rds_operation_onprem_replica_status.stdout is search(rds_operation_filter_db_pattern)
+      - rds_operation_onprem_replica_status.stdout is search(rds_operation_filter_table_pattern)
       - rds_operation_onprem_replica_status.stdout is not search('(?m)^[ \\t]*Last_IO_Error:[ \\t]*\\S')
       - rds_operation_onprem_replica_status.stdout is not search('(?m)^[ \\t]*Last_SQL_Error:[ \\t]*\\S')
     fail_msg: "On-Prem DB가 정상적인 RDS Replica가 아닙니다. DR Drill을 진행하지 마세요."
