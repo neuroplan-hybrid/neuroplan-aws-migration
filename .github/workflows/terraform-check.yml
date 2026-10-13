@@ -76,3 +76,9 @@ jobs:
             terraform -chdir="$dir" validate -no-color
             echo "::endgroup::"
           done
+
+      - name: Test AMG workspace with mock AWS provider
+        run: terraform -chdir=modules/amg test -no-color
+
+      - name: Test AMG opt-in and network guards with mock providers
+        run: terraform -chdir=envs/prod test -filter=tests/amg.tftest.hcl -no-color
