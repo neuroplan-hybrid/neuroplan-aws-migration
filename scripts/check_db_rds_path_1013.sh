@@ -17,9 +17,16 @@ RDS_PORT="${RDS_PORT:-3306}"
 RDS_CA="${RDS_CA:-}"
 DATA_GW="${DATA_GW:-192.168.44.62}"     # Infra VM 데이터망(ens224, nw-data)
 DATA_NET="${DATA_NET:-192.168.44.}"     # 출발지가 이 대역이어야 VPN·RDS SG·Infra policy에 맞음
-RDS_NET="${RDS_NET:-10.20.10}"          # DB 서브넷 10.20.100.0/24·101.0/24 (data-to-aws 목적지 10.20.100.0/22)
+# RDS IP 허용 범위 = Infra data-to-aws 목적지 10.20.100.0/22 (10.20.100.0 ~ 10.20.103.255, DB 서브넷 100·101/24 포함)
+# 문자열 접두어가 아니라 옥텟 숫자로 비교 (#107 리뷰: "10.20.10" 접두어는 10.20.104.x 등도 통과)
 
 fail=0
+in_rds_net() {   # 10.20.100.0/22 이면 0
+    local a b c d
+    IFS=. read -r a b c d <<<"$1"
+    [[ "$a" =~ ^[0-9]+$ && "$b" =~ ^[0-9]+$ && "$c" =~ ^[0-9]+$ && "$d" =~ ^[0-9]+$ ]] || return 1
+    (( a == 10 && b == 20 && c >= 100 && c <= 103 && d <= 255 ))
+}
 ok()   { printf '  [OK]   %s\n' "$*"; }
 bad()  { printf '  [FAIL] %s\n' "$*"; fail=$((fail+1)); }
 hint() { printf '         → %s\n' "$*"; }
@@ -31,7 +38,7 @@ printf '== DB VM → RDS 경로 점검 · %s · %s\n' "$(hostname -s)" "$(date '
 RDS_IP="$(getent ahostsv4 "$RDS_EP" 2>/dev/null | awk 'NR==1{print $1}')"
 if [[ -n "$RDS_IP" ]]; then ok "DNS: ${RDS_EP%%.*}… → ${RDS_IP}"
 else bad "DNS 해석 실패 (${RDS_EP})"; hint "/etc/resolv.conf가 Infra BIND(192.168.14.62)를 보는지, BIND 외부 포워딩 확인"; echo "== FAIL ${fail}건"; exit 1; fi
-[[ "$RDS_IP" == ${RDS_NET}* ]] && ok "RDS IP가 DB 서브넷 대역 (${RDS_IP})" || { bad "RDS IP ${RDS_IP}가 DB 서브넷(10.20.100.0/22) 밖"; hint "Infra data-to-aws 목적지(10.20.100.0/22)와 맞지 않음 → 엔드포인트·서브넷 확인"; }
+in_rds_net "$RDS_IP" && ok "RDS IP가 DB 서브넷 대역 (${RDS_IP})" || { bad "RDS IP ${RDS_IP}가 DB 서브넷(10.20.100.0/22) 밖"; hint "Infra data-to-aws 목적지(10.20.100.0/22)와 맞지 않음 → 엔드포인트·서브넷 확인"; }
 
 # 1) 경로 (#96 원인 ②)
 r="$(ip -o route get "$RDS_IP" 2>/dev/null)"

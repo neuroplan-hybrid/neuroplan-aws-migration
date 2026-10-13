@@ -23,11 +23,13 @@
 | 3 | DR 기간 데이터 확인 (승격 시점 GTID ~ 현재) | 정현 | — |
 | 4 | RDS 재동기화: 온프렘(Source) → RDS(Replica) | 정현 | **RDS → 온프렘 3306** 연결 (`aws-to-data`, RDS가 연결을 엶) — 이관 단계와 같은 방향, 10/12까지 사용하던 경로 |
 | 5 | GTID·Row Count 검증 → RDS를 Writer로 | 정현 | — |
-| 6 | 온프렘을 RDS의 Replica로 재구성 (역복제) | 정현 | **온프렘 DB → RDS 3306** (`data-to-aws` + DB VM 경로) → `check_db_rds_path_1013.sh` 두 DB 모두 OK 확인 (#96) |
+| 6 | 온프렘을 RDS의 Replica로 재구성 (역복제) — 복제 체인 **RDS → db-primary → db-replica** | 정현 | **db-primary → RDS 3306** (`data-to-aws` + DB VM 경로) → `check_db_rds_path_1013.sh` OK. db-replica도 같은 스크립트로 경로만 점검 (아래 참고) |
 | 7 | 앱 DB 엔드포인트 = RDS, ROSA 쓰기 차단 해제 | 정현·예린 | ROSA → RDS 3306 (RDS SG ROSA /20) |
 | 8 | **가중치 복귀 ROSA 1 / 온프렘 0** (Traffic Failback) | 희재 | 아래 3장 |
 | 9 | 사용자 쓰기 재개, k6 로그인·조회·저장 확인 | 정현·희재 | probe `weights <csv> 100` → 권한 DNS rosa 100% |
 
+- 데이터 흐름과 접속 방향 (정현 #107 확인): 4번 = 데이터 On-Prem → RDS, 접속 RDS → On-Prem 3306 / 6번 = 데이터 RDS → On-Prem, 접속 On-Prem → RDS 3306
+- 6번 복제 구성은 **RDS → db-primary → db-replica 체인** 기준: RDS의 직접 Replica는 db-primary 하나, db-replica는 지금처럼 db-primary의 Replica로 유지. db-replica를 RDS 직접 Replica로 바꾸라는 뜻이 아님. db-replica의 RDS 경로 점검은 #96처럼 경로가 빠져 있는지(관리망으로 나가는지) 미리 확인하는 용도
 - 4번과 6번은 **연결을 여는 쪽이 반대** (4: RDS → 온프렘, 6: 온프렘 → RDS). 10/13 #96은 6번 방향만 막혀 있던 사례 → 6번 전에 경로 점검 스크립트 필수
 
 ## 3. 8번 가중치 복귀 (희재)
