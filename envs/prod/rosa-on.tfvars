@@ -10,14 +10,15 @@ enable_nat           = true
 enable_dr_nlb        = true
 route53_routing_mode = "weighted" # 10/13 전환: LB DNS 입력과 같은 커밋 (#33, PR #49 리뷰 B안), 6-1 ROSA TLS preflight 통과(10/12)
 
-# Route 53 Weighted (전환 검증, B안): 시작 ROSA 0 / 온프렘 100 → 이후 가중치만 바꾸는 tfvars PR로 10/90 → 50/50
+# Route 53 Weighted (B안): 1013 #107 팀 결정 — Cutover 후 온프렘 DB는 읽기 전용이므로 실서비스는 처음부터 ROSA 1 / 온프렘 0
+#   0/100·10/90·50/50은 격리 조건의 probe 측정에서만 (docs/runbooks/route53_weighted_steps_1013.md 5장)
 # 10/13 전환 조건 (#28·#33·#34): ① ROSA Ingress LB DNS 확인 ② LB가 NLB가 아니면 primary_lb_zone_id 입력
 #   ③ dr-health·primary-health /actuator/health/routing = 200 ④ plan에서 Route 53 레코드·헬스체크 생성 내용 확인
 #   ⑤ ROSA TLS preflight 통과 (#59: Route externalCertificate·Router RBAC·외부 HTTPS SAN/Issuer) — 실패하면 off 유지 (weight 0도 양수 레코드가 모두 unhealthy면 응답 후보)
 # ROSA Router NLB (openshift-ingress/router-default, Type=network → Zone ID는 모듈 기본 NLB 값 사용, 10/13 describe-load-balancers·태그 확인)
 primary_lb_dns_name = "af7cae78d814d43e29f90033ed68a527-7820ebba64c0c69b.elb.ap-northeast-2.amazonaws.com"
-rosa_weight         = 0
-onprem_weight       = 100
+rosa_weight         = 1
+onprem_weight       = 0
 
 # ROSA HCP Worker
 # 공식 기본값과 비용 산정 기준을 명시적으로 고정한다.
