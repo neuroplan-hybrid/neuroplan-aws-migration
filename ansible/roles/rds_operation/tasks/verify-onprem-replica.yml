@@ -1,12 +1,9 @@
 ---
 - name: Build exact expected RDS replica source patterns
   ansible.builtin.set_fact:
-    rds_operation_master_host_pattern: >-
-      {{ '(?m)^[ \\t]*Master_Host:[ \\t]+' ~ (rds_operation_endpoint | regex_escape) ~ '[ \\t]*\\r?$' }}
-    rds_operation_master_port_pattern: >-
-      {{ '(?m)^[ \\t]*Master_Port:[ \\t]+' ~ (rds_operation_port | string | regex_escape) ~ '[ \\t]*\\r?$' }}
-    rds_operation_ssl_ca_pattern: >-
-      {{ '(?m)^[ \\t]*Master_SSL_CA_File:[ \\t]+' ~ (rds_operation_replication_ca_file | regex_escape) ~ '[ \\t]*\\r?$' }}
+    rds_operation_master_host_pattern: "(?m)^[ \\t]*Master_Host:[ \\t]+{{ rds_operation_endpoint | regex_escape }}[ \\t]*\\r?$"
+    rds_operation_master_port_pattern: "(?m)^[ \\t]*Master_Port:[ \\t]+{{ rds_operation_port | string | regex_escape }}[ \\t]*\\r?$"
+    rds_operation_ssl_ca_pattern: "(?m)^[ \\t]*Master_SSL_CA_File:[ \\t]+{{ rds_operation_replication_ca_file | regex_escape }}[ \\t]*\\r?$"
   no_log: true
 
 - name: Read On-Prem replica status
