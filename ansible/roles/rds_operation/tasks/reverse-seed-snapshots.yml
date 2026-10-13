@@ -1,0 +1,55 @@
+---
+- name: Read RDS snapshot before local comparison
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ rds_reverse_workspace.path }}/probe.py"
+      - --database
+      - "{{ rds_operation_database }}"
+      - --host
+      - "{{ rds_operation_endpoint }}"
+      - --port
+      - "{{ rds_operation_port | string }}"
+      - --user
+      - "{{ (rds_reverse_secret.stdout | from_json).username }}"
+      - --ca
+      - "{{ rds_reverse_workspace.path }}/ca.pem"
+  environment:
+    RDS_PROBE_PASSWORD: "{{ (rds_reverse_secret.stdout | from_json).password }}"
+  delegate_to: "{{ groups['rds_controller'][0] }}"
+  become: false
+  register: rds_reverse_before
+  changed_when: false
+  no_log: true
+
+- name: Read On-Prem all-table snapshot through local MariaDB socket
+  ansible.builtin.script:
+    cmd: "{{ (role_path ~ '/files/reverse_seed_probe.py') | quote }} --database {{ rds_operation_database | quote }} --socket {{ rds_operation_socket | quote }}"
+    executable: /usr/bin/python3
+  register: rds_reverse_local
+  changed_when: false
+  no_log: true
+
+- name: Read RDS snapshot again to reject application data drift
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - "{{ rds_reverse_workspace.path }}/probe.py"
+      - --database
+      - "{{ rds_operation_database }}"
+      - --host
+      - "{{ rds_operation_endpoint }}"
+      - --port
+      - "{{ rds_operation_port | string }}"
+      - --user
+      - "{{ (rds_reverse_secret.stdout | from_json).username }}"
+      - --ca
+      - "{{ rds_reverse_workspace.path }}/ca.pem"
+  environment:
+    RDS_PROBE_PASSWORD: "{{ (rds_reverse_secret.stdout | from_json).password }}"
+  delegate_to: "{{ groups['rds_controller'][0] }}"
+  become: false
+  register: rds_reverse_after
+  changed_when: false
+  no_log: true
+

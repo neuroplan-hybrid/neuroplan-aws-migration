@@ -1,0 +1,90 @@
+---
+- name: Require a frozen application and safe reverse-seed context
+  ansible.builtin.assert:
+    that:
+      - rds_operation_dr_writes_fenced | bool
+      - rds_operation_database is match('^[A-Za-z0-9]+$')
+      - groups.get('rds_controller', []) | length == 1
+      - rds_operation_node_role == 'onprem_replica'
+      - rds_operation_aws_region == 'ap-northeast-2'
+      - rds_operation_replication_ca_sha256 is match('^[a-f0-9]{64}$')
+    fail_msg: "양쪽 앱·배치·DDL 쓰기 동결 확인 후 dr_writes_fenced=true로 실행하세요. DB 비교만으로 동결을 보장하지 않습니다."
+
+- name: Allocate private reverse-seed check workspace on controller
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: .rds-reverse-seed
+  delegate_to: "{{ groups['rds_controller'][0] }}"
+  become: false
+  register: rds_reverse_workspace
+
+- name: Compare frozen RDS and On-Prem application data without mutations
+  block:
+    - name: Install read-only CLI probe on controller
+      ansible.builtin.copy:
+        src: reverse_seed_probe.py
+        dest: "{{ rds_reverse_workspace.path }}/probe.py"
+        mode: "0600"
+      delegate_to: "{{ groups['rds_controller'][0] }}"
+      become: false
+
+    - name: Download pinned public CA for the read-only RDS comparison
+      ansible.builtin.get_url:
+        url: https://truststore.pki.rds.amazonaws.com/ap-northeast-2/ap-northeast-2-bundle.pem
+        dest: "{{ rds_reverse_workspace.path }}/ca.pem"
+        checksum: "sha256:{{ rds_operation_replication_ca_sha256 }}"
+        validate_certs: true
+        mode: "0600"
+      delegate_to: "{{ groups['rds_controller'][0] }}"
+      become: false
+
+    - name: Read managed RDS Master Secret for read-only comparison
+      ansible.builtin.command:
+        argv:
+          - aws
+          - secretsmanager
+          - get-secret-value
+          - --region
+          - "{{ rds_operation_aws_region }}"
+          - --secret-id
+          - "{{ hostvars[groups['rds_controller'][0]].rds_operation_master_secret_arn }}"
+          - --query
+          - SecretString
+          - --output
+          - text
+      delegate_to: "{{ groups['rds_controller'][0] }}"
+      become: false
+      register: rds_reverse_secret
+      changed_when: false
+      no_log: true
+
+    - name: Snapshot RDS all-table content before and after the On-Prem snapshot
+      ansible.builtin.include_tasks: reverse-seed-snapshots.yml
+
+    - name: Require exact all-table equality and safe multidomain GTID boundary
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - "{{ rds_reverse_workspace.path }}/probe.py"
+          - --compare
+        stdin: "{{ {'before': rds_reverse_before.stdout | from_json, 'local': rds_reverse_local.stdout | from_json, 'after': rds_reverse_after.stdout | from_json} | to_json }}"
+      delegate_to: "{{ groups['rds_controller'][0] }}"
+      become: false
+      register: rds_reverse_comparison
+      changed_when: false
+
+    - name: Save fresh comparison baseline for this execution only
+      ansible.builtin.set_fact:
+        rds_reverse_baseline: "{{ rds_reverse_comparison.stdout | from_json }}"
+
+    - name: Display sanitized reverse-seed comparison
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ rds_reverse_baseline.tables }} tables / {{ rds_reverse_baseline.rows }} rows matched by schema and content SHA-256; candidate GTID {{ rds_reverse_baseline.baseline_gtid }}. No GTID changed by this check."
+  always:
+    - name: Remove private comparison workspace
+      ansible.builtin.file:
+        path: "{{ rds_reverse_workspace.path }}"
+        state: absent
+      delegate_to: "{{ groups['rds_controller'][0] }}"
+      become: false
+
