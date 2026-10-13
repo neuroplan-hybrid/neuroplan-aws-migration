@@ -1,5 +1,9 @@
 # 운영 RDS · GTID · DR Ansible 전달본
 
+RDS domain 0 누락으로 역복제 `1236`이 발생하거나 처음 역복제를 연결할 때는
+[전체 테이블 비교 및 승인된 다중 GTID 시작점 절차](README-rds-reverse-seed.md)를 먼저 따른다.
+RDS 현재 GTID를 임의로 복사하거나 Initial Sync/Cutover를 반복하지 않는다.
+
 이 전달본은 Terraform이 만든 **운영 RDS**를 대상으로 다음 순서를 자동화한다.
 
 ```text
@@ -172,9 +176,14 @@ ansible-playbook -i inventory/rds-operation.ini playbooks/rds-app-account.yml \
 ROSA Backend rollout 후 로그인·조회·저장 smoke test에서 확인한다.
 
 # 5. 운영 토폴로지: RDS → db-primary, db-replica
+# 먼저 README-rds-reverse-seed.md의 조회 모드와 별도 GO 확인.
+# 아래 GTID 승인은 첫 연결/중지된 복구 전용이며 정상 복제 재실행에는 사용 금지.
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
   -e rds_operation_run_mode=configure-onprem-replica \
   -e rds_operation_execute_mutations=true \
+  -e rds_operation_dr_writes_fenced=true \
+  -e rds_operation_reverse_seed_recovery_approved=true \
+  -e rds_operation_replication_use_ssl=true \
   -e rds_operation_outbound_repl_password='<Ansible Vault 또는 CI Secret>'
 
 ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
@@ -201,3 +210,55 @@ Replica로 바꾸는 단계에는 MariaDB 11.8의 `MASTER_DEMOTE_TO_SLAVE=1`을 
 GTID 위치를 안전하게 Replica 위치로 넘긴다.
 코드는 이 구성을 준비하지만, 운영 전용 RDS에서 첫 1회는 반드시 `SHOW SLAVE STATUS\G` 결과로
 `Slave_IO_Running: Yes`, `Slave_SQL_Running: Yes`를 확인한 뒤 운영 완료로 선언한다.
+
+## 역방향 복제 TLS 및 기존 연결 복구
+
+역복제는 `MASTER_SSL=1`, `MASTER_SSL_VERIFY_SERVER_CERT=1`과 서울 RDS CA를 사용한다.
+CA는 Controller에서 AWS 공식 HTTPS URL로 다운로드하고 고정 SHA-256을 검증한 뒤,
+SSH로 DB 2대의 `/etc/my.cnf.d/rds-ca/ca-bundle.pem`에 배포한다. DB VM의 인터넷 접근은
+필요하지 않다. 다운로드·체크섬 실패 시 복제를 정지하거나 교체하지 않는다.
+AWS CA 교체 시에는 공식 bundle을 확인하고 `rds_operation_replication_ca_sha256`도
+검토 후 갱신해야 한다. 현재 체크섬은 2026-10-13 공식 서울 bundle 기준이다.
+
+기존 로컬 `group_vars/rds_operation.yml`은 Git pull로 바뀌지 않는다. 예전 파일의
+`rds_operation_replication_use_ssl: false`는 true로 수정하거나 아래처럼 `-e`로 덮어쓴다.
+인증서 검증을 끄는 복구는 지원하지 않는다.
+
+현재 Source가 이미 RDS인데 CA 누락으로 IO=Connecting인 경우, 같은 configure 모드를
+재실행하면 TLS 옵션 및 앱 전용 복제 필터를 확인한다. GTID 복구 승인 없는 이 경로는 `RESET SLAVE`, GTID 재설정, 계정·비밀번호
+교체 또는 덤프 재Import를 하지 않는다. 정상 TLS 설정이면 불필요한 TLS 재시작도 하지 않는다.
+
+아래는 이미 RDS를 바라보는 db-primary만 복구하는 실행 예다. Cutover 성공과 쓰기 차단
+유지를 확인한 뒤 실행하고, 완료 전까지 Backend 쓰기 차단과 Route 53 OFF를 유지한다.
+
+```bash
+export AWS_PROFILE=junghyun
+cd ~/neuroplan-aws-migration/ansible
+
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
+  --limit 'rds_controller:db-primary' \
+  -e rds_operation_run_mode=configure-onprem-replica \
+  -e rds_operation_execute_mutations=true \
+  -e rds_operation_dr_writes_fenced=true \
+  -e rds_operation_replication_use_ssl=true \
+  -e @group_vars/rds_operation.vault.yml \
+  --ask-vault-pass --ask-pass --ask-become-pass
+```
+
+db-replica가 아직 기존 db-primary를 Source로 사용한다면 별도 승인 후 교체한다.
+그 경우에만 `--limit 'rds_controller:db-replica'`와
+`-e rds_operation_allow_reset_replica=true`를 위 명령에 사용한다.
+이미 RDS Source인 db-replica의 TLS 복구에는 reset 승인 값이 필요 없다.
+
+각 DB 구성 뒤 자동 검증이 끝나야 다음 DB로 진행한다. 두 DB를 모두 연결한 뒤 전체 검증:
+
+```bash
+ansible-playbook -i inventory/rds-operation.ini playbooks/rds-operation.yml \
+  -e rds_operation_run_mode=verify-onprem-replica \
+  --ask-pass --ask-become-pass
+```
+
+verify는 DB를 변경하지 않는다. 연결·catch-up을 최대 약 60초 기다린 뒤 Source 주소·포트,
+IO/SQL Yes, Lag 0, GTID Slave_Pos, read_only=1, TLS 및 인증서 검증 활성화,
+예상 CA 경로와 빈 IO/SQL 오류를 확인한다. 실패하면 상태를 확인하고 다음 전환 단계로
+진행하지 않는다. 이 테스트와 CI syntax-check는 실제 DB 복제 성공 증적을 대신하지 않는다.

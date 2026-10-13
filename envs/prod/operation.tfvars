@@ -47,3 +47,6 @@ rds_apply_immediately          = true
 
 # rosa-on.tfvars와 같은 값으로 유지한다. 활성화는 별도 Plan·승인 후 진행한다.
 enable_rds_cloudwatch_alarms = false
+
+# Managed Grafana (#98): AMG → VPN → Monitoring VM /32:9090 경로 + AMG SG. ROSA 운영 기간 검증, 10/16 이후 유지 여부는 별도 결정
+enable_amg_onprem_prometheus = true
