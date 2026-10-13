@@ -76,10 +76,18 @@ ansible-playbook \
 - 전체 데이터가 일치한 기준점만 `gtid_slave_pos`에 적용합니다. domain 1을 임의로
   올리지 않습니다. RDS domain 0의 과거 이력은 해당 시점까지 동등한 **앱 데이터**가
   있음을 확인하여 bootstrap하며, RDS 시스템 DB의 동등성은 주장하지 않습니다.
+- 신규 Source의 `MASTER_DEMOTE_TO_SLAVE=1`은 로컬 binlog GTID를 병합할 수 있습니다.
+  비교 Guard가 로컬 history를 먼저 검증하며, `CHANGE MASTER` 직후 실제
+  `gtid_slave_pos`가 이번 실행의 승인 기준점과 정확히 같은지 다시 검사합니다.
+  불일치하면 `START SLAVE` 없이 중단합니다. 기존 RDS Source 복구도 같은 검사를 거칩니다.
 - `replicate_do_db=infraready`, `replicate_wild_do_table=infraready.%`를 런타임 및
   `/etc/my.cnf.d/neuroplan-rds-replication.cnf`에 설정합니다. MariaDB 재시작 없음.
   기존 상충 필터는 덮어쓰지 않고 거부합니다. 별도 기존 옵션 파일의 중복 필터는
   운영자가 점검해야 하며 재기동 후에도 SHOW SLAVE STATUS로 재확인해야 합니다.
+- 일반 configure 실행도 기존 필터가 다르면 `STOP SLAVE` 후 필터를 적용하고
+  다시 시작하므로 잠시 복제가 중단됩니다. GTID 복구 승인이 없으면 GTID는 바꾸지 않습니다.
+  이 두 필터의 운영 전제는 RDS `binlog_format=ROW`입니다. STATEMENT/MIXED 구성은
+  교차 DB 문장과 필터 동작을 별도 검토해야 하므로 그대로 적용하지 않습니다.
 - RDS 내부 heartbeat 및 시스템 DB는 DR 데이터 대상이 아닙니다. RDS 사용자/권한을
   그대로 온프렘으로 복제하는 기능은 제공하지 않습니다. 기존 온프렘 앱 계정은 유지하며
   DR 앱 계정·로그인·쓰기 검증은 별도 필수입니다. 서버 범위 DDL은 필터만으로 완전히

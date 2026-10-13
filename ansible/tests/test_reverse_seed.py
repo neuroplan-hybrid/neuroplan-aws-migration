@@ -169,6 +169,36 @@ class ReverseSeedTests(unittest.TestCase):
                                 'Require frozen writes and reject conflicting existing replication filters',
                                 'Apply application-only filters with replication threads stopped'}))
 
+    def test_demote_and_tls_configuration_cannot_start_before_exact_gtid_guard(self):
+        import yaml
+        from types import SimpleNamespace
+        from jinja2 import Environment
+        path = PATH.parents[1] / 'tasks/configure-onprem-replica.yml'
+        tasks = yaml.safe_load(path.read_text(encoding='utf8'))
+        names = [t['name'] for t in tasks]
+        configure = next(t for t in tasks if t['name'] == 'Configure this On-Prem DB as an RDS GTID replica')
+        repair = next(t for t in tasks if t['name'].startswith('Repair TLS'))
+        self.assertIn('MASTER_DEMOTE_TO_SLAVE=1', configure['ansible.builtin.shell'])
+        self.assertNotIn('START SLAVE', configure['ansible.builtin.shell'])
+        self.assertNotIn('START SLAVE', repair['ansible.builtin.command']['argv'][-1])
+        read_name = 'Read applied GTID after source configuration and before replica start'
+        guard_name = 'Require approved GTID preserved after CHANGE MASTER before START SLAVE'
+        start_name = 'Ensure a configured RDS replica is read only and started'
+        self.assertLess(names.index(configure['name']), names.index(read_name))
+        self.assertLess(names.index(repair['name']), names.index(read_name))
+        self.assertLess(names.index(read_name), names.index(guard_name))
+        self.assertLess(names.index(guard_name), names.index(start_name))
+        guard = tasks[names.index(guard_name)]
+        self.assertEqual(guard['when'], 'rds_operation_reverse_seed_recovery_approved | bool')
+        predicate = Environment().compile_expression(guard['ansible.builtin.assert']['that'][0])
+        expected = '0-1822967101-448,1-1-3076'
+        for actual, accepted in [(expected+'\n', True), ('1-1-3076', False),
+                                 ('0-1822967101-448,1-1-3077', False),
+                                 ('0-1822967101-449,1-1-3076', False),
+                                 (expected+',2-9-1', False)]:
+            self.assertEqual(predicate(rds_reverse_configured_gtid=SimpleNamespace(stdout=actual),
+                                       rds_reverse_baseline={'baseline_gtid': expected}), accepted)
+
 
 if __name__ == '__main__':
     unittest.main()

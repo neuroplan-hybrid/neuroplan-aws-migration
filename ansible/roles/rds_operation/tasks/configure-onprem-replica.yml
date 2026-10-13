@@ -136,7 +136,7 @@
 - name: Configure this On-Prem DB as an RDS GTID replica
   ansible.builtin.shell: |
     set -euo pipefail
-    mariadb --protocol=socket --execute "STOP SLAVE; RESET SLAVE ALL; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_HOST='{{ rds_operation_endpoint }}', MASTER_PORT={{ rds_operation_port | int }}, MASTER_USER='{{ rds_operation_outbound_repl_username }}', MASTER_PASSWORD='$RDS_OPERATION_OUTBOUND_REPL_PASSWORD', MASTER_CONNECT_RETRY=10, MASTER_USE_GTID=slave_pos, MASTER_DEMOTE_TO_SLAVE=1, MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1; START SLAVE;"
+    mariadb --protocol=socket --execute "STOP SLAVE; RESET SLAVE ALL; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_HOST='{{ rds_operation_endpoint }}', MASTER_PORT={{ rds_operation_port | int }}, MASTER_USER='{{ rds_operation_outbound_repl_username }}', MASTER_PASSWORD='$RDS_OPERATION_OUTBOUND_REPL_PASSWORD', MASTER_CONNECT_RETRY=10, MASTER_USE_GTID=slave_pos, MASTER_DEMOTE_TO_SLAVE=1, MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1;"
   args:
     executable: /bin/bash
   environment:
@@ -155,7 +155,7 @@
       - mariadb
       - --protocol=socket
       - --execute
-      - "STOP SLAVE; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1; START SLAVE;"
+      - "STOP SLAVE; SET GLOBAL read_only = ON; CHANGE MASTER TO MASTER_SSL=1, MASTER_SSL_CA='{{ rds_operation_replication_ca_file }}', MASTER_SSL_VERIFY_SERVER_CERT=1;"
   when:
     - rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern)
     - rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern)
@@ -165,16 +165,33 @@
       or not (rds_operation_existing_slave_status.stdout is search(rds_operation_ssl_enabled_pattern))
       or not (rds_operation_existing_slave_status.stdout is search(rds_operation_ssl_verify_pattern))
 
-- name: Ensure an already-configured RDS replica is read only and started
+- name: Read applied GTID after source configuration and before replica start
+  ansible.builtin.command:
+    argv:
+      - mariadb
+      - --protocol=socket
+      - --batch
+      - --skip-column-names
+      - --execute
+      - "SELECT @@GLOBAL.gtid_slave_pos;"
+  register: rds_reverse_configured_gtid
+  changed_when: false
+  when: rds_operation_reverse_seed_recovery_approved | bool
+
+- name: Require approved GTID preserved after CHANGE MASTER before START SLAVE
+  ansible.builtin.assert:
+    that:
+      - (rds_reverse_configured_gtid.stdout | trim) == rds_reverse_baseline.baseline_gtid
+    fail_msg: "CHANGE MASTER 이후 GTID가 승인된 전체 비교 기준점과 다릅니다. 복제는 시작하지 않았습니다. 쓰기 동결을 유지하고 원인을 확인하세요."
+  when: rds_operation_reverse_seed_recovery_approved | bool
+
+- name: Ensure a configured RDS replica is read only and started
   ansible.builtin.command:
     argv:
       - mariadb
       - --protocol=socket
       - --execute
       - "SET GLOBAL read_only = ON; START SLAVE;"
-  when: >-
-    (rds_operation_existing_slave_status.stdout is search(rds_operation_master_host_pattern))
-    and (rds_operation_existing_slave_status.stdout is search(rds_operation_master_port_pattern))
   no_log: true
 
 - name: Verify configured RDS replica before moving to the next DB
