@@ -52,6 +52,8 @@ rds_apply_immediately          = true
 # 이 변경은 현재 적용 대상인 rosa-on 단계에 한정하며 operation.tfvars는 별도 승인 없이 변경하지 않는다.
 # Apply 후 출력되는 SNS Topic ARN으로 이메일 구독을 별도 등록·승인한다.
 enable_rds_cloudwatch_alarms = true
+# 운영 RDS 실측 max_connections=30 (2026-10-13), 한도의 80%에서 사전 경고.
+rds_database_connections_alarm_threshold = 24
 
 # Managed Grafana (#98): AMG → VPN → Monitoring VM /32:9090 경로 + AMG SG. ROSA 운영 기간 검증, 10/16 이후 유지 여부는 별도 결정
 enable_amg_onprem_prometheus = true
