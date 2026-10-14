@@ -22,18 +22,20 @@ replica가 아니며, 기존 #63의 T3 PITR(신규 #123 제안의 T4) 데이터 
 ### 순서와 역할
 
 1. **문서·PR 순서 변경 리뷰:** 운영 Route 53은 **ROSA 1 / 온프렘 0**을 유지하고 **#118은 Draft**로 남긴다.
-2. **적용 직전 GO:** DB·네트워크·플랫폼 승인, 최신 RDS/역복제/Backend/네트워크 기준선, 추가 비용·작업 시간·중단 및 복구 담당 확인.
-3. **#122 최종 Plan·별도 Apply:** 최신 main/HEAD/실제 운영 State와 #115 알람 ON 입력을 유지한 두 tfvars를 재검증한다. 예상되는 기존 RDS Multi-AZ와 이벤트 구독의 **두 in-place update만** 확인된 **승인 Plan**으로 담당자가 Apply한다. 기존 saved Plan은 재사용하지 않는다.
-4. **안정화:** RDS MultiAZ/서로 다른 Primary·Secondary AZ, DB 복제 2대, Backend/외부 경로 등 아래 **30초 간격 10분 연속** PASS.
-5. **통제 Failover는 별도:** 신규 #123 T3 시연 포함과 실제 주입 승인은 **별개**. 안정화 후 DB 주도·복구 담당·측정 기준·전원 GO가 있어야만 실시. 두 온프렘 DB 복제와 서비스 완전 정상화 뒤 다음 시연.
-6. **사이트 DR:** 다른 장애(플랫폼·VPN·TLS 포함) 정상 복구 후 기존 **T5 Site DR(신규 #123 T6)** 진행. **#118의 8번 Merge/Apply는 정현님의 온프렘 사용자 쓰기 재개 `T_write_resume` 확인·공유 이후**, 팀 GO 및 최신 운영 Plan 재검증 후에만 실행한다.
+2. **선행 시연:** T1·T2 종료 후 기존 T4 VPN 단일 터널 본 시연(신규 #123 T5)을 먼저 진행하고, 두 VPN 터널·복제·DR 경로 완전 정상 복귀를 확인한 뒤 Multi-AZ 작업 창으로 넘어간다. 완료한 VPN 본 시연은 번호 변경 때문에 다시 주입하지 않는다.
+3. **적용 직전 GO:** DB·네트워크·플랫폼 승인, 최신 RDS/역복제/Backend/네트워크 기준선, 추가 비용·작업 시간·중단 및 복구 담당 확인.
+4. **#122 Merge 후 main 기반 최종 Plan·Apply:** 먼저 PR HEAD의 최신 운영 Plan을 검토한다. **적용 직전 GO가 확인된 작업 창에서 #122를 Merge하고**, 병합된 최신 main/실제 운영 State와 #115 알람 ON 입력으로 두 tfvars의 최종 Plan을 새로 생성·검토한다. 예상되는 기존 RDS Multi-AZ와 이벤트 구독의 **두 in-place update만** 확인된 **승인 Plan**으로 지정 실행자가 Apply한다. 브랜치에서만 Apply하고 main을 false로 남기는 방식은 금지한다. Merge 자체가 Apply/강제 Failover 실행은 아니며, 다른 Apply도 이 작업 창에 섞지 않는다. 기존 saved Plan은 재사용하지 않는다.
+5. **안정화:** RDS MultiAZ/서로 다른 Primary·Secondary AZ, DB 복제 2대, Backend/외부 경로 등 아래 **30초 간격 10분 연속** PASS.
+6. **통제 Failover는 별도:** 신규 #123 T3 시연 포함과 실제 주입 승인은 **별개**. 안정화 후 DB 주도·복구 담당·측정 기준·전원 GO가 있어야만 실시. 두 온프렘 DB 복제와 서비스 완전 정상화 뒤 다음 시연.
+7. **사이트 DR:** 다른 장애(플랫폼·VPN·TLS 포함) 정상 복구 후 기존 **T5 Site DR(신규 #123 T6)** 진행. **#118의 8번 Merge/Apply는 정현님의 온프렘 사용자 쓰기 재개 `T_write_resume` 확인·공유 이후**, 팀 GO 및 최신 운영 Plan 재검증 후에만 실행한다.
 
 ### 적용 직전 필수 체크
 
 - [ ] 네트워크·플랫폼의 **Multi-AZ 선적용 순서 동의** 및 DB 포함 적용 직전 GO 확인. #118 Draft 상태.
-- [ ] 작업 창·추가 비용·중단 기준·DB/네트워크/플랫폼 복구 담당 및 종료 일정 확인. 기존 **10/15 15:00 GO 마감**, **17:00 미안정 시 당일 사이트 DR 보류**, 필요 시 **10/16 10:00 재확인**, **10/16 18:00 destroy** 기준 유지.
+- [ ] 작업 창·추가 비용·중단 기준·DB/네트워크/플랫폼 복구 담당 및 종료 일정 확인. 기존 **10/15 15:00 GO 마감**, **17:00 미안정 시 강제 Failover 생략·사이트 DR 독립 GO 판단**, 필요 시 **10/16 10:00 재확인**, **10/16 18:00 destroy** 기준 유지.
 - [ ] **ROSA 1 / 온프렘 0**, 현재 RDS Writer 단일 쓰기 경로·RDS `available`, Pending 변경 없음.
 - [ ] 온프렘 **db-primary·db-replica 두 대** `read_only=1`, IO/SQL **Yes**, lag **0**, 새 복제 오류 없음, GTID 진행·마지막 테스트 데이터 반영 확인.
+- [ ] 희재 담당 읽기 전용 확인: 두 DB `SHOW SLAVE STATUS\G`의 **Master_Host가 현재 RDS Endpoint 호스트명**인지 확인. 고정 IP라면 Apply/Failover 중단하고 DB 담당과 조치 승인부터 진행한다. 확인 결과는 실제 조회 증적으로 기록하며, 이 문서 작성으로 확인 완료 처리하지 않는다.
 - [ ] ROSA Backend **Ready 2/2**, DB 연결·재시도 상태와 로그인→조회→저장 기준선 정상.
 - [ ] 두 DB `check_db_rds_path_1013.sh` **exit=0**, `check_vpn_state_0930.sh --aws` **FAIL 0**, ROSA·DR probe HTTP **200**, 외부 3경로 PASS. **#116** 측정 스크립트로 적용 전부터 기록.
 - [ ] 최신 **main·#122 HEAD·State·입력**에서 양쪽 tfvars Plan 재생성. 기존 **#115 비공개 알람 ON 입력** 및 실제 auto.tfvars 유지. 리소스 0 add / 2 update / 0 destroy, 변경 필드는 `multi_az: false→true`와 이벤트 `failover` 추가뿐이어야 한다. **DB 교체·다른 변경·알람 삭제·Route 53 변경 시 STOP**.
@@ -42,6 +44,14 @@ replica가 아니며, 기존 #63의 T3 PITR(신규 #123 제안의 T4) 데이터 
 **#118 후속:** Multi-AZ 적용 뒤에는 #118을 **최신 main/State**에 맞춰 재검증하여 두 tfvars에 `rds_multi_az=true`, 기존 #115 알람 ON, 유효한 RDS 설정이 유지되도록 한다. #118의 가중치 변경만 승인된 단계에서 반영하고, **`T_write_resume` 이전 Merge/Apply를 하지 않는다.**
 
 **주의:** 두 tfvars의 `rds_apply_immediately=true`가 이미 설정돼 있어 병합 뒤 일반 Terraform Apply에도 Multi-AZ 전환이 포함될 수 있다. 위 게이트 충족 전에는 **Draft·Merge/Apply 보류**, 백업/스냅샷 보존 정책과 종료 일정은 그대로 둔다.
+
+### 17:00 이후 우선순위
+
+- **10/15 17:00까지 Multi-AZ 안정화 미완료이면 신규 T3 통제 Failover는 생략**하고 P0인 기존 T5(신규 T6) Site DR 준비를 우선한다. 미실행 Failover를 PASS로 표시하지 않는다.
+- DR은 Multi-AZ 시연 완료 여부와 독립적으로 판단한다. RDS available·Backend 정상, 두 온프렘 DB read_only=1·GTID catch-up·IO/SQL Yes·lag 0·새 오류 없음, 두 VPN/DR NLB·TLS/외부 경로 정상 및 기존 DR 승격/측정/복구 담당 조건을 **모두** 확인하고 전원 GO를 받은 경우만 진행한다.
+- RDS 전환 중, 복제·쓰기·VPN·TLS 장애가 남았다면 Failover를 생략해도 **DR NO-GO**다. DB와 무관한 비필수 항목만 미완료일 때도 필수 게이트를 우회하지 않는다.
+- 당일 DR 게이트 미충족이면 10/16 오전에 재확인한다. **10:00까지 미충족이면 시연 범위 축소/DR 보류**, **18:00 destroy**는 유지한다.
+- 이미 완료된 Multi-AZ를 임의 Single-AZ로 되돌리거나 진행 중인 AWS 변경을 임의 취소하지 않는다.
 
 ## 최종 Plan
 
