@@ -14,8 +14,8 @@ route53_routing_mode = "weighted" # 10/13 rosa-on과 같은 커밋에서 LB DNS�
 # T6 Failback 동안은 ROSA 0 / 온프렘 1로 고정 (시나리오 4.10)
 # weighted 전환 조건은 rosa-on.tfvars와 같음 (⑤ ROSA TLS preflight 통과, #59)
 primary_lb_dns_name = "af7cae78d814d43e29f90033ed68a527-7820ebba64c0c69b.elb.ap-northeast-2.amazonaws.com" # rosa-on과 같은 값
-rosa_weight         = 1
-onprem_weight       = 0
+rosa_weight         = 0
+onprem_weight       = 1
 
 # ROSA HCP Worker
 # rosa-on과 동일한 타입/대수로 유지한다.
