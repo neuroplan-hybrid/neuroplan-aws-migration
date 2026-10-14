@@ -76,3 +76,9 @@ jobs:
             terraform -chdir="$dir" validate -no-color
             echo "::endgroup::"
           done
+
+      - name: Test VPN and NLB alarms with mock AWS
+        run: terraform -chdir=modules/network-alarms test -no-color
+
+      - name: Test network alarm opt-in with mock providers
+        run: terraform -chdir=envs/prod test -filter=tests/network-alarms.tftest.hcl -no-color
