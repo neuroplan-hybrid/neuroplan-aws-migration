@@ -16,17 +16,17 @@ replica가 아니며, 기존 #63의 T3 PITR(신규 #123 제안의 T4) 데이터 
 
 ## 적용 순서 개편 제안 및 Merge/Apply 전 GO
 
-**제안 순서: #122 Multi-AZ 선적용 → 10분 연속 안정화 → 별도 승인 후 신규 #123 T3 통제 RDS Failover → 각 장애 정상화 → 기존 T5(신규 T6) Site DR.**
+**최신 정정 기준의 순서 제안: Master_Host 확인·새 운영 Plan → 적용 직전 GO → #122 Merge·최신 main Plan·Multi-AZ Apply → 10분 연속 안정화 → T1·T2 → 기존 T4 VPN 본 시연(신규 T5)·정상 복귀 → 인증서/DR 사전 확인 → 기존 T5 Site DR(신규 T6).** 통제 RDS Failover의 실제 배치·작업 창은 별도 합의한다. 이 순서는 희재님의 정정 댓글 6166803565를 반영한 **팀 검토안**이며, 플랫폼 일정 확인 없이 확정하지 않는다.
 기존 런북의 “#118 T5 이후 #122 적용” 조건을 변경하는 방향으로 **DB 담당은 조건부 동의**했다. **네트워크 담당의 최종 순서 동의, 플랫폼 GO, 작업 창·비용·복구 담당 확정은 아직 필요**하므로 이 문서 수정만으로 적용 권한은 생기지 않는다.
 
 ### 순서와 역할
 
 1. **문서·PR 순서 변경 리뷰:** 운영 Route 53은 **ROSA 1 / 온프렘 0**을 유지하고 **#118은 Draft**로 남긴다.
-2. **선행 시연:** T1·T2 종료 후 기존 T4 VPN 단일 터널 본 시연(신규 #123 T5)을 먼저 진행하고, 두 VPN 터널·복제·DR 경로 완전 정상 복귀를 확인한 뒤 Multi-AZ 작업 창으로 넘어간다. **10/14 11:34 실행은 리허설이며 본 시연 완료로 간주하지 않는다.** 본 시연은 이후 별도로 실행·증적/정상 복귀 확인한 경우에만 완료로 기록한다. 실제 본 시연을 완료했다면 번호 변경 때문에 다시 주입하지 않는다.
+2. **시연 순서 재확인:** 희재님의 정정에 따라 T1·T2 및 VPN T4 본 시연을 Multi-AZ Apply 선행 조건으로 두지 않는다. **Multi-AZ 적용·10분 안정화 후 T1·T2, 그 뒤 VPN T4 본 시연을 진행하는 안**을 플랫폼/DB/네트워크 담당이 검토·확정한다. VPN 본 시연은 Multi-AZ 상태 기준으로 기록한다. **10/14 11:34 VPN 실행은 리허설이며 본 시연 완료로 간주하지 않는다.** 두 터널·복제·DR 경로 정상 복귀 후 사이트 DR로 넘어간다.
 3. **적용 직전 GO:** DB·네트워크·플랫폼 승인, 최신 RDS/역복제/Backend/네트워크 기준선, 추가 비용·작업 시간·중단 및 복구 담당 확인.
 4. **#122 Merge 후 main 기반 최종 Plan·Apply:** 먼저 PR HEAD의 최신 운영 Plan을 검토한다. **적용 직전 GO가 확인된 작업 창에서 #122를 Merge하고**, 병합된 최신 main/실제 운영 State와 #115 알람 ON 입력으로 두 tfvars의 최종 Plan을 새로 생성·검토한다. 예상되는 기존 RDS Multi-AZ와 이벤트 구독의 **두 in-place update만** 확인된 **승인 Plan**으로 지정 실행자가 Apply한다. 브랜치에서만 Apply하고 main을 false로 남기는 방식은 금지한다. Merge 자체가 Apply/강제 Failover 실행은 아니며, 다른 Apply도 이 작업 창에 섞지 않는다. 기존 saved Plan은 재사용하지 않는다.
 5. **안정화:** RDS MultiAZ/서로 다른 Primary·Secondary AZ, DB 복제 2대, Backend/외부 경로 등 아래 **30초 간격 10분 연속** PASS.
-6. **통제 Failover는 별도:** 신규 #123 T3 시연 포함과 실제 주입 승인은 **별개**. 안정화 후 DB 주도·복구 담당·측정 기준·전원 GO가 있어야만 실시. 두 온프렘 DB 복제와 서비스 완전 정상화 뒤 다음 시연.
+6. **통제 Failover는 별도:** 신규 #123 T3의 **실제 실행 위치와 작업 창은 아직 확정하지 않는다.** 시연 포함과 실제 주입 승인은 **별개**. 안정화 후 DB 주도·복구 담당·측정 기준·전원 GO가 있어야만 실시. 두 온프렘 DB 복제와 서비스 완전 정상화 뒤 다음 시연.
 7. **사이트 DR:** 다른 장애(플랫폼·VPN·TLS 포함) 정상 복구 후 기존 **T5 Site DR(신규 #123 T6)** 진행. **#118의 8번 Merge/Apply는 정현님의 온프렘 사용자 쓰기 재개 `T_write_resume` 확인·공유 이후**, 팀 GO 및 최신 운영 Plan 재검증 후에만 실행한다.
 
 ### 적용 직전 필수 체크
@@ -35,7 +35,7 @@ replica가 아니며, 기존 #63의 T3 PITR(신규 #123 제안의 T4) 데이터 
 - [ ] 작업 창·추가 비용·중단 기준·DB/네트워크/플랫폼 복구 담당 및 종료 일정 확인. 기존 **10/15 15:00 GO 마감**, **17:00 미안정 시 강제 Failover 생략·사이트 DR 독립 GO 판단**, 필요 시 **10/16 10:00 재확인**, **10/16 18:00 destroy** 기준 유지.
 - [ ] **ROSA 1 / 온프렘 0**, 현재 RDS Writer 단일 쓰기 경로·RDS `available`, Pending 변경 없음.
 - [ ] 온프렘 **db-primary·db-replica 두 대** `read_only=1`, IO/SQL **Yes**, lag **0**, 새 복제 오류 없음, GTID 진행·마지막 테스트 데이터 반영 확인.
-- [ ] 희재 담당 읽기 전용 확인: 두 DB `SHOW SLAVE STATUS\G`의 **Master_Host가 현재 RDS Endpoint 호스트명**인지 확인. 고정 IP라면 Apply/Failover 중단하고 DB 담당과 조치 승인부터 진행한다. 확인 결과는 실제 조회 증적으로 기록하며, 이 문서 작성으로 확인 완료 처리하지 않는다.
+- [ ] 정현 측 읽기 전용 조회·희재 검토: 두 DB `SHOW SLAVE STATUS\G`의 **Master_Host가 현재 RDS Endpoint 호스트명**인지 확인. [정현 측 실제 조회 결과](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/122#issuecomment-6166771567)는 두 DB 모두 DNS 호스트명, IO/SQL Yes, lag 0, 마지막 오류 빈 값이다. 이는 해당 조회 시점 증적이며 **Apply 직전 재확인**한다. 고정 IP/불일치면 STOP. 계정 전달이나 설정 변경은 필요하지 않으며 이 항목만으로 전체 GO가 되지 않는다.
 - [ ] ROSA Backend **Ready 2/2**, DB 연결·재시도 상태와 로그인→조회→저장 기준선 정상.
 - [ ] 두 DB `check_db_rds_path_1013.sh` **exit=0**, `check_vpn_state_0930.sh --aws` **FAIL 0**, ROSA·DR probe HTTP **200**, 외부 3경로 PASS. **#116** 측정 스크립트로 적용 전부터 기록.
 - [ ] 최신 **main·#122 HEAD·State·입력**에서 양쪽 tfvars Plan 재생성. 기존 **#115 비공개 알람 ON 입력** 및 실제 auto.tfvars 유지. 리소스 0 add / 2 update / 0 destroy, 변경 필드는 `multi_az: false→true`와 이벤트 `failover` 추가뿐이어야 한다. **DB 교체·다른 변경·알람 삭제·Route 53 변경 시 STOP**.
