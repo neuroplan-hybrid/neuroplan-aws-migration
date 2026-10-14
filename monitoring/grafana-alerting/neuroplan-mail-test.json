@@ -1,0 +1,113 @@
+{
+  "apiVersion": 1,
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "neuroplan-mail-test",
+      "folder": "Neuroplan Monitoring",
+      "interval": "30s",
+      "rules": [
+        {
+          "uid": "np_notification_test",
+          "title": "NeuroplanNotificationTest",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "ag16e60k8yzggd",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "ag16e60k8yzggd"
+                },
+                "editorMode": "code",
+                "expr": "vector(1)",
+                "instant": true,
+                "range": false,
+                "intervalMs": 30000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "type": "threshold",
+                "expression": "B",
+                "refId": "C",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "params": [
+                        0
+                      ],
+                      "type": "gt"
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last"
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "NoData",
+          "execErrState": "Error",
+          "for": "0s",
+          "annotations": {
+            "summary": "NeuroplanNotificationTest",
+            "description": "Grafana → 기존 온프렘 Alertmanager → 메일 전달 테스트입니다. 실제 서비스 장애가 아닙니다."
+          },
+          "labels": {
+            "severity": "warning",
+            "site": "rosa",
+            "project": "neuroplan",
+            "managed_by": "grafana",
+            "purpose": "notification-test"
+          },
+          "isPaused": false
+        }
+      ]
+    }
+  ]
+}

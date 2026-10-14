@@ -1,0 +1,28 @@
+  # BEGIN NEUROPLAN CLOUD BLACKBOX
+  - job_name: blackbox-neuroplan-cloud
+    scrape_interval: 30s
+    scrape_timeout: 15s
+    metrics_path: /probe
+    params:
+      module: [http_2xx_neuroplan_cloud]
+    static_configs:
+      - targets: ['https://app.neuroplan.cloud/']
+        labels:
+          site: public
+          endpoint_type: app
+      - targets: ['https://primary-health.neuroplan.cloud/actuator/health/routing']
+        labels:
+          site: rosa
+          endpoint_type: routing
+      - targets: ['https://dr-health.neuroplan.cloud/actuator/health/routing']
+        labels:
+          site: onprem-dr
+          endpoint_type: routing
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: 127.0.0.1:9115
+  # END NEUROPLAN CLOUD BLACKBOX

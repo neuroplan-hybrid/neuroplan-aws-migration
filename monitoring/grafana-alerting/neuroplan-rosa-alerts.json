@@ -1,0 +1,310 @@
+{
+  "apiVersion": 1,
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "neuroplan-rosa",
+      "folder": "Neuroplan Monitoring",
+      "interval": "30s",
+      "rules": [
+        {
+          "uid": "np_rosa_scrape_failed",
+          "title": "ROSA Backend 수집 실패",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "ag16e60k8yzggd",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "ag16e60k8yzggd"
+                },
+                "editorMode": "code",
+                "expr": "max(1 - up{namespace=\"neuroplan\",service=\"neuroplan-backend\"})",
+                "instant": true,
+                "range": false,
+                "intervalMs": 30000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "type": "threshold",
+                "expression": "B",
+                "refId": "C",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "params": [
+                        0
+                      ],
+                      "type": "gt"
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last"
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "NoData",
+          "execErrState": "Error",
+          "for": "1m",
+          "annotations": {
+            "summary": "ROSA Backend 수집 실패",
+            "description": "발견된 Backend 수집 대상 중 하나 이상이 1분 동안 UP=0입니다. 대상 발견 누락 전체를 보장하는 규칙은 아닙니다."
+          },
+          "labels": {
+            "severity": "critical",
+            "site": "rosa",
+            "project": "neuroplan",
+            "managed_by": "grafana"
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "np_rosa_ready_short",
+          "title": "ROSA Backend Ready 부족",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "ag16e60k8yzggd",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "ag16e60k8yzggd"
+                },
+                "editorMode": "code",
+                "expr": "clamp_min(max(kube_deployment_spec_replicas{namespace=\"neuroplan\",deployment=\"neuroplan-backend\"}) - sum(kube_pod_status_ready{namespace=\"neuroplan\",condition=\"true\",pod=~\"neuroplan-backend-.*\"}), 0)",
+                "instant": true,
+                "range": false,
+                "intervalMs": 30000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "type": "threshold",
+                "expression": "B",
+                "refId": "C",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "params": [
+                        0
+                      ],
+                      "type": "gt"
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last"
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "NoData",
+          "execErrState": "Error",
+          "for": "2m",
+          "annotations": {
+            "summary": "ROSA Backend Ready 부족",
+            "description": "Backend Ready Pod 수가 Deployment의 희망 Replica 수보다 2분 동안 적습니다."
+          },
+          "labels": {
+            "severity": "critical",
+            "site": "rosa",
+            "project": "neuroplan",
+            "managed_by": "grafana"
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "np_rosa_http_5xx_high",
+          "title": "ROSA Backend HTTP 5xx 증가",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "ag16e60k8yzggd",
+              "model": {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "ag16e60k8yzggd"
+                },
+                "editorMode": "code",
+                "expr": "(100 * (sum(rate(http_server_requests_seconds_count{namespace=\"neuroplan\",service=\"neuroplan-backend\",status=~\"5..\"}[5m])) or on() (0 * sum(rate(http_server_requests_seconds_count{namespace=\"neuroplan\",service=\"neuroplan-backend\"}[5m])))) / clamp_min(sum(rate(http_server_requests_seconds_count{namespace=\"neuroplan\",service=\"neuroplan-backend\"}[5m])), 0.000000001)) and on() (min(up{namespace=\"neuroplan\",service=\"neuroplan-backend\"}) == 1)",
+                "instant": true,
+                "range": false,
+                "intervalMs": 30000,
+                "maxDataPoints": 43200,
+                "refId": "A"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "type": "reduce",
+                "expression": "A",
+                "reducer": "last",
+                "refId": "B"
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 0,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "type": "threshold",
+                "expression": "B",
+                "refId": "C",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "params": [
+                        5
+                      ],
+                      "type": "gt"
+                    },
+                    "operator": {
+                      "type": "and"
+                    },
+                    "query": {
+                      "params": [
+                        "C"
+                      ]
+                    },
+                    "reducer": {
+                      "type": "last"
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "NoData",
+          "execErrState": "Error",
+          "for": "5m",
+          "annotations": {
+            "summary": "ROSA Backend HTTP 5xx 증가",
+            "description": "최근 5분 요청 처리율 중 HTTP 5xx 비율이 5%를 초과하는 상태가 5분 지속됩니다. 낮은 요청량에서는 작은 오류 수에도 비율이 높을 수 있습니다. 수집 실패는 정상으로 치환하지 않습니다."
+          },
+          "labels": {
+            "severity": "warning",
+            "site": "rosa",
+            "project": "neuroplan",
+            "managed_by": "grafana"
+          },
+          "isPaused": false
+        }
+      ]
+    }
+  ]
+}
