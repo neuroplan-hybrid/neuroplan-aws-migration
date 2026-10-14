@@ -36,14 +36,18 @@
 ## 3. 8번 가중치 복귀 (희재)
 
 ```bash
-# DevOps VM (heejae) — tfvars PR (T5 8번에서 0/1로 바꾼 operation.tfvars를 1/0으로)
+# DevOps VM (heejae) — tfvars PR (T5 8번에서 0/1로 바꾼 operation.tfvars·rosa-on.tfvars를 함께 1/0으로)
 cd ~/neuroplan-aws-migration && git switch main && git pull --ff-only
 git switch -c feature/route53-failback-1-0-$(date +%m%d)
-sed -i -E 's/^rosa_weight( *)= *[0-9]+/rosa_weight\1= 1/; s/^onprem_weight( *)= *[0-9]+/onprem_weight\1= 0/' envs/prod/operation.tfvars
-git diff && (cd envs/prod && terraform fmt -check -diff)
-git commit -am "feat(edge): Route 53 Failback — ROSA 1 / 온프렘 0" && git push -u origin HEAD
+sed -i -E 's/^rosa_weight( *)= *[0-9]+/rosa_weight\1= 1/; s/^onprem_weight( *)= *[0-9]+/onprem_weight\1= 0/' \
+  envs/prod/operation.tfvars envs/prod/rosa-on.tfvars
+git diff --stat && grep -nE '^(rosa|onprem)_weight' envs/prod/operation.tfvars envs/prod/rosa-on.tfvars && (cd envs/prod && terraform fmt -check -diff)
+git add envs/prod/operation.tfvars envs/prod/rosa-on.tfvars && git commit -m "feat(edge): Route 53 Failback — ROSA 1 / 온프렘 0" && git push -u origin HEAD
 ```
-- Plan 기대값 (예린 `operation`): `app_weighted["rosa"]`·`["onprem"]` **2 change (weight만)**, 그 외 0
+- 두 파일(`operation.tfvars`·`rosa-on.tfvars`)을 **함께** 1/0으로 되돌림 (T5 8번 #118과 같은 이유: 어느 파일로 Plan/Apply해도 같은 값)
+- Plan 기대값 (예린 `operation`·`rosa-on` 각각): `app_weighted["rosa"]`·`["onprem"]` **2 change (weight만)**, 그 외 0
+- 가중치 전환만으로 DB Writer가 복귀하지 않음: 2~7번(데이터 재동기화·RDS Writer 재확정·ROSA 쓰기 차단 해제 등)을 모두 마친 뒤에만 진행
+- Route 53 weight 0은 절대 차단이 아님 (DR Target이 전부 비정상이면 ROSA가 응답 후보). 복귀 전까지 ROSA 쓰기 차단(`DEMO_WRITE_FENCE=true`) 유지
 - apply 조건: 2~7번 정현·예린 완료 공유 후에만 (데이터가 RDS에 맞춰지기 전 복귀 금지)
 - 확인: 권한 DNS = ROSA NLB IP (`dig +short app.neuroplan.cloud @<awsdns NS>`), HC 2개 Healthy, probe `rosa`·`dr` 200
 
