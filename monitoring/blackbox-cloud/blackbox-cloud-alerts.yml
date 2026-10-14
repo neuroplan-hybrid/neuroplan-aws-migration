@@ -1,0 +1,36 @@
+groups:
+  - name: neuroplan.cloud.blackbox
+    interval: 30s
+    rules:
+      - alert: NeuroplanCloudProbeFailed
+        expr: probe_success{job="blackbox-neuroplan-cloud"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Neuroplan 외부 경로 실패: {{ $labels.site }}"
+          description: "{{ $labels.instance }}의 HTTP 200/TLS 검사가 1분 이상 실패했습니다."
+      - alert: NeuroplanCloudProbeSlow
+        expr: (probe_duration_seconds{job="blackbox-neuroplan-cloud"} > 2) and (probe_success{job="blackbox-neuroplan-cloud"} == 1)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Neuroplan 외부 경로 지연: {{ $labels.site }}"
+          description: "{{ $labels.instance }}의 전체 Probe 시간이 5분 이상 2초를 초과했습니다."
+      - alert: NeuroplanCloudTLSExpirySoon
+        expr: ((probe_ssl_earliest_cert_expiry{job="blackbox-neuroplan-cloud"} - time()) < 604800) and (probe_success{job="blackbox-neuroplan-cloud"} == 1)
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Neuroplan TLS 인증서 만료 임박: {{ $labels.site }}"
+          description: "{{ $labels.instance }} 인증서 체인의 가장 빠른 만료 시각이 7일 이내입니다."
+      - alert: NeuroplanCloudProbeScrapeFailed
+        expr: up{job="blackbox-neuroplan-cloud"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Neuroplan Blackbox 수집 실패: {{ $labels.site }}"
+          description: "{{ $labels.instance }}의 Blackbox 검사 결과를 Prometheus가 1분 이상 수집하지 못했습니다."
