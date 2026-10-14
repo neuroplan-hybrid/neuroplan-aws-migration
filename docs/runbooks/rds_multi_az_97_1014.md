@@ -17,7 +17,12 @@ replica가 아니며, T3 PITR 데이터 복구 검증을 대체하지 않는다.
 - 플랫폼: 최신 State와 이 PR HEAD에서 두 tfvars의 최종 Plan 확인.
 - DB 담당: 현재 RDS Writer → db-primary/db-replica GTID 복제 및 Backend 연결 영향 검토.
 - 예산/시간: 현재 서울 리전 요금으로 추가 비용 확인, 작업 시간과 중단 기준 합의.
-- T1/T2/T5 작업과 겹치지 않는 시간으로 조율. #118 트래픽 전환 PR과 분리한다.
+- **#118의 T5 8번 Merge·Apply 및 사후 확인이 완료되기 전에는 #122를 병합하지 않는다.**
+- #122를 먼저 병합하면 #118의 Plan에 Multi-AZ 변경이 섞일 수 있으므로 순서를 뒤집지 않는다.
+- T5 완료 후 최신 main을 반영하고, #118이 확정한 Route 53 가중치를 유지한다.
+  현재 #122 브랜치의 이전 가중치(ROSA 1 / 온프렘 0)를 다시 덮어쓰지 않는다.
+- 그 시점의 최신 State/운영 입력으로 두 tfvars Plan을 다시 확인한 뒤 DB/플랫폼 GO를 받는다.
+- T1/T2/T5 작업과 겹치지 않는 별도 적용 시간으로 조율한다.
 
 **두 tfvars의 rds_apply_immediately는 이미 true이다.** 이 PR을 병합하면
 이후 정상 운영 Apply에도 Multi-AZ 전환이 포함되므로, 검토 중에는 Draft를 유지한다.
@@ -27,14 +32,22 @@ replica가 아니며, T3 PITR 데이터 복구 검증을 대체하지 않는다.
 
 플랫폼의 기존 사전 Plan은 DB 1개 변경이었다. 이 PR에는 이벤트 구독 변경이
 추가되므로, 현재 알려진 State 기준 기대값은 **0 add / 2 change / 0 destroy**:
-DB `multi_az: false → true`, 이벤트 구독 `failover` 추가. 이는 실제 Plan 결과가 아니다.
+DB `multi_az: false → true`, 이벤트 구독 `failover` 추가.
+2026-10-14 플랫폼 담당은 HEAD `a0912aa`에서 두 tfvars 모두 이 결과와
+교체/예상 밖 변경 없음, CI 성공을 보고했다.
+이는 T5 완료 후의 최종 Apply 승인이 아니다. main/State/입력 변경 후에는
+이전 saved Plan을 재사용하지 않고 다시 Plan한다.
 
 두 파일 모두 기존 운영 private 입력을 그대로 사용해야 한다.
-특히 #115 활성화에 사용한 `network-alarms-on.tfvars.json` 및 실제 운영
-auto.tfvars를 누락하지 않는다. private 입력은 커밋/출력하지 않는다.
+특히 `network-alarms-on.tfvars.json`은 향후 활성화 예정 파일이 아니라,
+**#115의 네트워크 알람 4개 활성화에 이미 사용한 운영 비공개 입력**이다.
+플랫폼 담당의 #122 Plan-only 검증에서도 이 파일을 명시적으로 포함했다.
+이 파일과 실제 운영 auto.tfvars 등 현재 적용에 사용한 입력을 누락하지 않는다.
+private 입력은 커밋/출력하지 않는다.
 다른 변수로 상태를 덮어쓰거나 예전 worktree의 Plan을 재사용하지 않는다.
 
 다음 차이가 있으면 Apply 중단:
+
 - 4개 VPN/NLB 알람 삭제, 신규 SNS Topic 생성, 기존 구독 제거
 - DB 교체/삭제, 엔진/파라미터/클래스/스토리지/백업 변경
 - ROSA, Route 53 가중치, HC, VPN, 방화벽 변경
@@ -51,6 +64,7 @@ DNS 재해석이 필요할 수 있으며, 외부 GTID 복제의 재연결 성공
 확인해야 한다. MariaDB 자동 복구/GTID 연속성을 검증 없이 단정하지 않는다.
 
 승인된 DB 자격 증명을 사용해 각 DB에서 읽기 전용 조회로 기록:
+
 - RDS: available, MultiAZ, AZ/SecondaryAZ, PendingModifiedValues, Endpoint,
   엔진/백업 설정, GTID/binlog 상태, 실제 DB 쓰기 경로
 - db-primary / db-replica: `SHOW SLAVE STATUS\G`, IO/SQL Yes,
@@ -70,6 +84,7 @@ DB/플랫폼 담당에게 공유한다. 임의 GTID reset, CHANGE MASTER,
 재시드, DB 재시작, DNS 전환으로 해결하지 않는다. 복구 조치는 별도 승인한다.
 
 완료 후:
+
 1. RDS available / MultiAZ=true / 다른 AZ의 SecondaryAZ / Pending 변경 해소 확인.
 2. 동일 Endpoint와 Backend 연결/Ready/스크랩/5xx/응답시간 확인.
 3. 두 온프렘 DB read_only=1 및 IO/SQL Yes, lag 수렴, 오류 없음, GTID 진행 확인.
