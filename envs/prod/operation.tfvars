@@ -51,5 +51,5 @@ enable_rds_cloudwatch_alarms = true
 # 운영 RDS 실측 max_connections=30 (2026-10-13)의 80%에서 사전 경고.
 rds_database_connections_alarm_threshold = 24
 
-# Managed Grafana (#98): AMG → VPN → Monitoring VM /32:9090 경로 + AMG SG. ROSA 운영 기간 검증, 10/16 이후 유지 여부는 별도 결정
-enable_amg_onprem_prometheus = true
+# #113: 기존 온프렘 Grafana 재사용. AMG 전용 네트워크는 활성화하지 않는다.
+enable_amg_onprem_prometheus = false
