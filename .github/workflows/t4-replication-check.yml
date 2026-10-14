@@ -1,0 +1,29 @@
+name: T4 replication recorder
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/record_t4_replication.sh'
+      - 'scripts/README-t4-replication.md'
+      - 'scripts/tests/test_record_t4_replication.py'
+      - '.github/workflows/t4-replication-check.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/record_t4_replication.sh'
+      - 'scripts/tests/test_record_t4_replication.py'
+      - '.github/workflows/t4-replication-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recorder:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: bash -n scripts/record_t4_replication.sh
+      - name: Read-only collector mock tests (no actual DB or sudo)
+        run: python3 -m unittest discover -s scripts/tests -p 'test_record_t4_replication.py' -v
