@@ -26,8 +26,8 @@ run "four_notification_only_alarms" {
     error_message = "Expected two tunnel alarms and two NLB target group alarms."
   }
   assert {
-    condition     = alltrue([for a in aws_cloudwatch_metric_alarm.vpn_tunnel_down : a.dimensions.VpnId == var.vpn_connection_id && a.statistic == "Maximum" && a.datapoints_to_alarm == 2])
-    error_message = "VPN alarms must be tunnel-specific and require consecutive down periods."
+    condition     = alltrue([for key, a in aws_cloudwatch_metric_alarm.vpn_tunnel_down : a.dimensions == { TunnelIpAddress = var.vpn_tunnel_ips[key] } && a.statistic == "Maximum" && a.datapoints_to_alarm == 2])
+    error_message = "VPN alarms must use only the published TunnelIpAddress dimension and require consecutive down periods."
   }
   assert {
     condition     = alltrue([for a in aws_cloudwatch_metric_alarm.nlb_no_healthy_targets : a.namespace == "AWS/NetworkELB" && a.statistic == "Maximum" && a.threshold == 1])

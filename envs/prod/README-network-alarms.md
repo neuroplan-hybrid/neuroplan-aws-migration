@@ -79,6 +79,32 @@ Terraform은 NLB가 현재 primary_lb_dns_name과 일치하고 TG가 그 NLB에 
 읽기 전용 Data Source로 검사한다. ROSA 소유 NLB/TG는 Import·수정·삭제하지 않는다.
 DR NLB/TG·VPN ID/터널 IP·SNS ARN은 기존 모듈 Output으로 자동 연결한다.
 
+## VPN 지표 차원 사전 검증
+
+10/14 운영 계정의 실제 `list-metrics` 결과에서 터널별 TunnelState는
+`TunnelIpAddress` 단독 차원으로 게시됐고, VpnId 단독 및 무차원 집계 지표도
+별도로 존재했다. `VpnId + TunnelIpAddress` 두 차원의 조합은 확인되지 않았다.
+CloudWatch 차원은 지표 식별자의 일부이므로, 존재하지 않는 조합으로 Plan이
+통과해도 실제 알람 데이터는 조회되지 않을 수 있다.
+
+이 모듈은 터널별 지표에 `TunnelIpAddress`만 지정한다. VPN ID는 Terraform
+입력/연결 출처와 알람 설명에 보존한다. 터널 IP는 기존 VPN 모듈 Output을 사용하며
+운영 IP를 코드에 하드코딩하지 않는다. 실제 VPN 텔레메트리의 IP와 게시 지표 IP가
+일치하는지 활성화 전에 확인한다. 원본 출력은 비공개 증적으로 보관한다.
+
+```bash
+aws ec2 describe-vpn-connections --region ap-northeast-2 --query 'VpnConnections[].{Id:VpnConnectionId,Tunnels:VgwTelemetry[].OutsideIpAddress}' --output json
+aws cloudwatch list-metrics --region ap-northeast-2 --namespace AWS/VPN --metric-name TunnelState --query 'Metrics[].Dimensions' --output json
+
+# 실제 대상 터널 IP로 바꾼 뒤 실행. 자리표시자를 그대로 실행하지 않는다.
+TUNNEL_IP='실제-터널-외부-IP'
+aws cloudwatch get-metric-statistics --region ap-northeast-2 --namespace AWS/VPN --metric-name TunnelState --dimensions Name=TunnelIpAddress,Value="$TUNNEL_IP" --start-time "$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ)" --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --period 60 --statistics Maximum --query 'Datapoints[].{Time:Timestamp,Value:Maximum}' --output table
+```
+
+차원 수정 전 HEAD의 기존 OFF/ON saved Plan은 적용하지 않는다.
+수정된 최신 HEAD 기준으로 두 운영 tfvars 전체 Plan을 다시 검증한다.
+예상 알람 수/동작 조건/기존 SNS 재사용은 동일하다.
+
 ## Plan·Apply·확인
 
 - 기존 운영 계정·S3 State·default workspace·최신 코드로 전체 Plan을 새로 만든다.

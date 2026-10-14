@@ -3,7 +3,7 @@ resource "aws_cloudwatch_metric_alarm" "vpn_tunnel_down" {
   for_each = var.vpn_tunnel_ips
 
   alarm_name          = "${var.project_name}-vpn-${each.key}-down"
-  alarm_description   = "VPN redundancy degraded: this tunnel has no UP sample in the configured consecutive periods. T4 injection may be intentional."
+  alarm_description   = "VPN ${var.vpn_connection_id} redundancy degraded: this tunnel has no UP sample in the configured consecutive periods. T4 injection may be intentional."
   namespace           = "AWS/VPN"
   metric_name         = "TunnelState"
   statistic           = "Maximum"
@@ -15,7 +15,6 @@ resource "aws_cloudwatch_metric_alarm" "vpn_tunnel_down" {
   treat_missing_data  = "missing"
 
   dimensions = {
-    VpnId           = var.vpn_connection_id
     TunnelIpAddress = each.value
   }
   alarm_actions = [var.sns_topic_arn]
