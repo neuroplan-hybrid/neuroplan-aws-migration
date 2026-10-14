@@ -51,13 +51,17 @@ RDS/SNS·VPN·DR NLB가 없는 단계에서 이 스위치를 켜면 Plan을 거�
 
 ## ROSA NLB·TG 조회 — 변경 없는 명령
 
-DevOps VM에서 기존 개인 AWS Profile을 사용한다.
+DevOps VM에서 실행자의 기존 인증 환경을 유지한다. 아래 예시는 AWS_PROFILE을
+강제로 변경하지 않는다. 프로필 선택이 필요하면 본인에게 발급된 프로필을 사용한다.
+먼저 아래 계정 조회가 성공하고 Account가 운영 계정 707191185613인지 확인한다.
+다른 계정이거나 권한 오류가 나면 NLB 조회·Plan·Apply를 중단한다.
 
 ```bash
-export AWS_PROFILE=junghyun
 export AWS_PAGER=""
 
-aws elbv2 describe-load-balancers +  --region ap-northeast-2 +  --query 'LoadBalancers[].{Name:LoadBalancerName,DNS:DNSName,Type:Type,ARN:LoadBalancerArn}' +  --output table
+aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output table
+
+aws elbv2 describe-load-balancers --region ap-northeast-2 --query 'LoadBalancers[].{Name:LoadBalancerName,DNS:DNSName,Type:Type,ARN:LoadBalancerArn}' --output table
 ```
 
 현재 운영 `primary_lb_dns_name`과 DNS가 정확히 같은 NLB를 선택한다.
@@ -66,9 +70,9 @@ aws elbv2 describe-load-balancers +  --region ap-northeast-2 +  --query 'LoadBal
 ```bash
 ROSA_NLB_ARN='위에서-확인한-실제-NLB-ARN'
 
-aws elbv2 describe-listeners +  --region ap-northeast-2 --load-balancer-arn "$ROSA_NLB_ARN" +  --query 'Listeners[].{Port:Port,Protocol:Protocol,Actions:DefaultActions}' +  --output table
+aws elbv2 describe-listeners --region ap-northeast-2 --load-balancer-arn "$ROSA_NLB_ARN" --query 'Listeners[].{Port:Port,Protocol:Protocol,Actions:DefaultActions}' --output table
 
-aws elbv2 describe-target-groups +  --region ap-northeast-2 --load-balancer-arn "$ROSA_NLB_ARN" +  --query 'TargetGroups[].{Name:TargetGroupName,Port:Port,Protocol:Protocol,ARN:TargetGroupArn}' +  --output table
+aws elbv2 describe-target-groups --region ap-northeast-2 --load-balancer-arn "$ROSA_NLB_ARN" --query 'TargetGroups[].{Name:TargetGroupName,Port:Port,Protocol:Protocol,ARN:TargetGroupArn}' --output table
 ```
 
 Terraform은 NLB가 현재 primary_lb_dns_name과 일치하고 TG가 그 NLB에 연결됐는지
@@ -78,6 +82,9 @@ DR NLB/TG·VPN ID/터널 IP·SNS ARN은 기존 모듈 Output으로 자동 연결
 ## Plan·Apply·확인
 
 - 기존 운영 계정·S3 State·default workspace·최신 코드로 전체 Plan을 새로 만든다.
+- #114가 병합된 최신 main과 수정한 PR HEAD를 대조한다. 먼저 기본 OFF에서
+  rosa-on.tfvars·operation.tfvars 각각 전체 Plan이 0 add / 0 change / 0 destroy인지
+  플랫폼 실행 환경에서 확인한다. 로컬 mock/CI PASS를 운영 Plan 증적으로 대신하지 않는다.
 - ROSA TG 1개면 **CloudWatch 알람 4 add** 예상(터널 2 + DR 1 + ROSA 1).
   ROSA TG N개면 3+N개, ROSA 없이 DR/VPN만이면 3개다.
 - SNS 추가·구독 추가·기존 RDS/VPN/NLB/Route 53/IAM 변경·삭제는 없어야 한다.
