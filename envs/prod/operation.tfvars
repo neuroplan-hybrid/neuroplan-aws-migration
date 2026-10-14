@@ -23,7 +23,7 @@ compute_machine_type = "m5.xlarge"
 rosa_replicas        = 3
 
 # 운영 RDS 기본 사양
-# 운영 RDS는 Single-AZ를 유지하며, 데이터 보호 검증은 T3 PITR로 수행한다.
+# 운영 RDS는 Multi-AZ HA를 제안하며, 데이터 보호 검증은 T3 PITR로 수행한다.
 project_name              = "neuroplan"
 environment               = "prod"
 rds_identifier            = "neuroplan-rds-operation"
@@ -33,7 +33,7 @@ rds_instance_class        = "db.t4g.micro"
 rds_allocated_storage     = 20
 rds_database_name         = null
 rds_master_username       = "neuroplanadmin"
-rds_multi_az              = false
+rds_multi_az              = true
 rds_backup_retention_days = 7
 rds_deletion_protection   = false
 
