@@ -26,7 +26,7 @@ run "four_notification_only_alarms" {
     error_message = "Expected two tunnel alarms and two NLB target group alarms."
   }
   assert {
-    condition     = alltrue([for key, a in aws_cloudwatch_metric_alarm.vpn_tunnel_down : a.dimensions == { TunnelIpAddress = var.vpn_tunnel_ips[key] } && a.statistic == "Maximum" && a.datapoints_to_alarm == 2])
+    condition     = alltrue([for key, a in aws_cloudwatch_metric_alarm.vpn_tunnel_down : length(a.dimensions) == 1 && a.dimensions.TunnelIpAddress == var.vpn_tunnel_ips[key] && a.statistic == "Maximum" && a.datapoints_to_alarm == 2])
     error_message = "VPN alarms must use only the published TunnelIpAddress dimension and require consecutive down periods."
   }
   assert {
@@ -67,3 +67,4 @@ run "reject_invalid_period" {
   }
   expect_failures = [var.evaluation_periods]
 }
+
