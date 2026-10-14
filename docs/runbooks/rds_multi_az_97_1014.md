@@ -9,34 +9,51 @@ CloudWatch 알람 임계값, 백업 7일, Final Snapshot 설정은 유지한다.
 PoC/Single-AZ에는 failover 구독을 추가하지 않는다.
 
 Multi-AZ는 별도 AZ의 동기식 standby를 이용한 운영 HA이다. 읽기 분산용
-replica가 아니며, T3 PITR 데이터 복구 검증을 대체하지 않는다.
-이번 범위에는 강제 failover, reboot, GTID reset, Writer 승격, Route 53 전환이 없다.
+replica가 아니며, 기존 #63의 T3 PITR(신규 #123 제안의 T4) 데이터 복구를 대체하지 않는다.
+**#122의 Terraform 변경 자체에는 강제 Failover·reboot·GTID reset·Writer 승격·Route 53 전환이 없다.**
+그러나 DB 담당이 #123의 **신규 T3 통제 RDS Failover 시연 포함에는 조건부 동의**했다(#122 댓글 6166356556). 
+실제 장애 주입은 Multi-AZ Apply/안정화와 별도의 전원 GO가 필요하다.
 
-## Merge/Apply 전 GO
+## 적용 순서 개편 제안 및 Merge/Apply 전 GO
 
-- 플랫폼: 최신 State와 이 PR HEAD에서 두 tfvars의 최종 Plan 확인.
-- DB 담당: 현재 RDS Writer → db-primary/db-replica GTID 복제 및 Backend 연결 영향 검토.
-- 예산/시간: 현재 서울 리전 요금으로 추가 비용 확인, 작업 시간과 중단 기준 합의.
-- **#118의 T5 8번 Merge·Apply 및 사후 확인이 완료되기 전에는 #122를 병합하지 않는다.**
-- #122를 먼저 병합하면 #118의 Plan에 Multi-AZ 변경이 섞일 수 있으므로 순서를 뒤집지 않는다.
-- T5 완료 후 최신 main을 반영하고, #118이 확정한 Route 53 가중치를 유지한다.
-  현재 #122 브랜치의 이전 가중치(ROSA 1 / 온프렘 0)를 다시 덮어쓰지 않는다.
-- 그 시점의 최신 State/운영 입력으로 두 tfvars Plan을 다시 확인한 뒤 DB/플랫폼 GO를 받는다.
-- T1/T2/T5 작업과 겹치지 않는 별도 적용 시간으로 조율한다.
+**제안 순서: #122 Multi-AZ 선적용 → 10분 연속 안정화 → 별도 승인 후 신규 #123 T3 통제 RDS Failover → 각 장애 정상화 → 기존 T5(신규 T6) Site DR.**
+기존 런북의 “#118 T5 이후 #122 적용” 조건을 변경하는 방향으로 **DB 담당은 조건부 동의**했다. **네트워크 담당의 최종 순서 동의, 플랫폼 GO, 작업 창·비용·복구 담당 확정은 아직 필요**하므로 이 문서 수정만으로 적용 권한은 생기지 않는다.
 
-**두 tfvars의 rds_apply_immediately는 이미 true이다.** 이 PR을 병합하면
-이후 정상 운영 Apply에도 Multi-AZ 전환이 포함되므로, 검토 중에는 Draft를 유지한다.
-백업/스냅샷 보존 정책과 종료 일정은 바꾸지 않는다.
+### 순서와 역할
+
+1. **문서·PR 순서 변경 리뷰:** 운영 Route 53은 **ROSA 1 / 온프렘 0**을 유지하고 **#118은 Draft**로 남긴다.
+2. **적용 직전 GO:** DB·네트워크·플랫폼 승인, 최신 RDS/역복제/Backend/네트워크 기준선, 추가 비용·작업 시간·중단 및 복구 담당 확인.
+3. **#122 최종 Plan·별도 Apply:** 최신 main/HEAD/실제 운영 State와 #115 알람 ON 입력을 유지한 두 tfvars를 재검증한다. 예상되는 기존 RDS Multi-AZ와 이벤트 구독의 **두 in-place update만** 확인된 **승인 Plan**으로 담당자가 Apply한다. 기존 saved Plan은 재사용하지 않는다.
+4. **안정화:** RDS MultiAZ/서로 다른 Primary·Secondary AZ, DB 복제 2대, Backend/외부 경로 등 아래 **30초 간격 10분 연속** PASS.
+5. **통제 Failover는 별도:** 신규 #123 T3 시연 포함과 실제 주입 승인은 **별개**. 안정화 후 DB 주도·복구 담당·측정 기준·전원 GO가 있어야만 실시. 두 온프렘 DB 복제와 서비스 완전 정상화 뒤 다음 시연.
+6. **사이트 DR:** 다른 장애(플랫폼·VPN·TLS 포함) 정상 복구 후 기존 **T5 Site DR(신규 #123 T6)** 진행. **#118의 8번 Merge/Apply는 정현님의 온프렘 사용자 쓰기 재개 `T_write_resume` 확인·공유 이후**, 팀 GO 및 최신 운영 Plan 재검증 후에만 실행한다.
+
+### 적용 직전 필수 체크
+
+- [ ] 네트워크·플랫폼의 **Multi-AZ 선적용 순서 동의** 및 DB 포함 적용 직전 GO 확인. #118 Draft 상태.
+- [ ] 작업 창·추가 비용·중단 기준·DB/네트워크/플랫폼 복구 담당 및 종료 일정 확인. 기존 **10/15 15:00 GO 마감**, **17:00 미안정 시 당일 사이트 DR 보류**, 필요 시 **10/16 10:00 재확인**, **10/16 18:00 destroy** 기준 유지.
+- [ ] **ROSA 1 / 온프렘 0**, 현재 RDS Writer 단일 쓰기 경로·RDS `available`, Pending 변경 없음.
+- [ ] 온프렘 **db-primary·db-replica 두 대** `read_only=1`, IO/SQL **Yes**, lag **0**, 새 복제 오류 없음, GTID 진행·마지막 테스트 데이터 반영 확인.
+- [ ] ROSA Backend **Ready 2/2**, DB 연결·재시도 상태와 로그인→조회→저장 기준선 정상.
+- [ ] 두 DB `check_db_rds_path_1013.sh` **exit=0**, `check_vpn_state_0930.sh --aws` **FAIL 0**, ROSA·DR probe HTTP **200**, 외부 3경로 PASS. **#116** 측정 스크립트로 적용 전부터 기록.
+- [ ] 최신 **main·#122 HEAD·State·입력**에서 양쪽 tfvars Plan 재생성. 기존 **#115 비공개 알람 ON 입력** 및 실제 auto.tfvars 유지. 리소스 0 add / 2 update / 0 destroy, 변경 필드는 `multi_az: false→true`와 이벤트 `failover` 추가뿐이어야 한다. **DB 교체·다른 변경·알람 삭제·Route 53 변경 시 STOP**.
+- [ ] 승인된 saved Plan·commit SHA·운영 입력/State 기준을 기록하고 **지정 실행자**만 별도 Apply한다. 민감 변수·State/Plan 원문은 Git·댓글에 게시하지 않는다.
+
+**#118 후속:** Multi-AZ 적용 뒤에는 #118을 **최신 main/State**에 맞춰 재검증하여 두 tfvars에 `rds_multi_az=true`, 기존 #115 알람 ON, 유효한 RDS 설정이 유지되도록 한다. #118의 가중치 변경만 승인된 단계에서 반영하고, **`T_write_resume` 이전 Merge/Apply를 하지 않는다.**
+
+**주의:** 두 tfvars의 `rds_apply_immediately=true`가 이미 설정돼 있어 병합 뒤 일반 Terraform Apply에도 Multi-AZ 전환이 포함될 수 있다. 위 게이트 충족 전에는 **Draft·Merge/Apply 보류**, 백업/스냅샷 보존 정책과 종료 일정은 그대로 둔다.
 
 ## 최종 Plan
 
 플랫폼의 기존 사전 Plan은 DB 1개 변경이었다. 이 PR에는 이벤트 구독 변경이
 추가되므로, 현재 알려진 State 기준 기대값은 **0 add / 2 change / 0 destroy**:
 DB `multi_az: false → true`, 이벤트 구독 `failover` 추가.
-2026-10-14 플랫폼 담당은 HEAD `a0912aa`에서 두 tfvars 모두 이 결과와
-교체/예상 밖 변경 없음, CI 성공을 보고했다.
-이는 T5 완료 후의 최종 Apply 승인이 아니다. main/State/입력 변경 후에는
-이전 saved Plan을 재사용하지 않고 다시 Plan한다.
+2026-10-14 플랫폼 담당은 **최신 검증 HEAD `6e2fc46`**에서 두 tfvars 모두
+**0 add / 2 update / 0 destroy**, 변경 필드는 **RDS `multi_az`와 기존 이벤트 구독 `event_categories`뿐**이며
+교체/추가/삭제 및 다른 변경이 없음을 운영 State 기반 **Plan-only**로 확인했다.
+앞선 `a0912aa`의 두 tfvars 검증과 CI 성공도 별도 기록됐다.
+이 결과는 **적용 직전 GO 및 승인된 saved Plan이 아니다**. 변경된 HEAD/운영 State/입력에 맞춰
+다시 Plan하고 과거 saved Plan을 재사용하지 않는다.
 
 두 파일 모두 기존 운영 private 입력을 그대로 사용해야 한다.
 특히 `network-alarms-on.tfvars.json`은 향후 활성화 예정 파일이 아니라,
@@ -85,15 +102,22 @@ DB/플랫폼 담당에게 공유한다. 임의 GTID reset, CHANGE MASTER,
 
 완료 후:
 
-1. RDS available / MultiAZ=true / 다른 AZ의 SecondaryAZ / Pending 변경 해소 확인.
-2. 동일 Endpoint와 Backend 연결/Ready/스크랩/5xx/응답시간 확인.
-3. 두 온프렘 DB read_only=1 및 IO/SQL Yes, lag 수렴, 오류 없음, GTID 진행 확인.
-4. 외부 3경로 PASS와 기존 4개 네트워크 알람 유지 확인.
-5. 기존 SNS Topic에 availability/failure/maintenance/failover 구독 활성 상태 확인.
+1. RDS `available`, **MultiAZ=true**, 서로 다른 Primary/Secondary AZ, Pending 변경 해소 확인.
+2. RDS Endpoint·Backend DB 재연결, Ready **2/2**·스크랩·5xx·로그인→조회→저장 정상 확인.
+3. **30초 간격 10분 연속** 두 온프렘 DB `read_only=1`, IO/SQL **Yes**, lag **0**, 새 복제 오류 없음, GTID 진행 및 테스트 데이터 반영 확인. 중간에 실패한 구간은 PASS로 처리하지 않는다.
+4. 두 DB 경로 `check_db_rds_path_1013.sh` exit=0, VPN `check_vpn_state_0930.sh --aws` FAIL 0, probe ROSA·DR HTTP 200, 외부 3경로 PASS. #116 측정 기록 보관.
+5. 기존 RDS CloudWatch 알람 2개와 #115 네트워크 알람 4개 유지. SNS Topic과 기존 availability/failure/maintenance/**failover** 구독 활성화 확인.
 
-위 확인은 구성 전환 확인이다. 실제 장애 발생·복구, 강제 failover 성공,
-RTO/RPO 또는 failover 메일 실수신 증거로 대체하지 않는다.
-failover 테스트가 필요하면 담당자 GO 후 별도 수동 테스트로 진행한다.
+**이상 시 후속 시연 STOP.** 로그·상태 조회와 자동 재연결 관찰을 우선하고 DB·복제·Backend 재시작 및 복제 STOP/START는 원인 확인 후 별도 개별 승인한다. 임의 GTID reset·CHANGE MASTER·재시드·재동기화·Single-AZ 원복은 기본 복구 범위가 아니다.
+
+위 안정화는 **구성/운영 상태 검증**이며 실제 강제 Failover 성공, RTO/RPO, failover 이메일 실수신 증거가 아니다.
+
+### 신규 #123 T3 — 통제 Failover 별도 GO
+
+- **DB 담당이 시연 포함에 조건부 동의**했더라도 실제 주입은 **안정화 PASS 이후 전원 별도 GO**를 받는다.
+- DB 담당 주도로 장애 주입 방식, 중단 기준, 복구 담당, 측정/작업 창을 확정한다. **DB User RTO = `T_rds_user − T_rds_inject`**(30초 연속 로그인→조회→저장 성공 구간의 시작 시각)을 사용해 사이트 DR RTO와 분리한다.
+- RDS/Backend 서비스 복구와 **온프렘 DB 두 대 GTID·IO/SQL·lag/read_only**가 다시 정상화된 뒤에만 기존 T5(신규 T6) Site DR로 넘어간다.
+- 안정화·시간·비용이 부족하면 강제 Failover를 **생략/축소**하되, 성공했다고 표시하지 않는다.
 
 ## 오프라인 검증
 
