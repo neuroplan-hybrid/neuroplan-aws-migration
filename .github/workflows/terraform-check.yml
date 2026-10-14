@@ -7,6 +7,7 @@ on:
       - "**/*.tf"
       - "**/*.tfvars"
       - "**/*.tfvars.json"
+      - "**/*.tftest.hcl"
       - "**/.terraform.lock.hcl"
       - ".github/workflows/terraform-check.yml"
   push:
@@ -15,6 +16,7 @@ on:
       - "**/*.tf"
       - "**/*.tfvars"
       - "**/*.tfvars.json"
+      - "**/*.tftest.hcl"
       - "**/.terraform.lock.hcl"
       - ".github/workflows/terraform-check.yml"
 
@@ -82,3 +84,6 @@ jobs:
 
       - name: Test network alarm opt-in with mock providers
         run: terraform -chdir=envs/prod test -filter=tests/network-alarms.tftest.hcl -no-color
+
+      - name: Test RDS Multi-AZ event categories with mock AWS
+        run: terraform -chdir=modules/data test -no-color

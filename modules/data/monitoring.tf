@@ -167,12 +167,15 @@ resource "aws_cloudwatch_metric_alarm" "rds_database_connections" {
 resource "aws_db_event_subscription" "rds_events" {
   count = var.enabled && var.enable_cloudwatch_alarms ? 1 : 0
 
-  name             = "${var.identifier}-events"
-  sns_topic        = aws_sns_topic.rds_alarms[0].arn
-  source_type      = "db-instance"
-  source_ids       = [aws_db_instance.mariadb[0].identifier]
-  event_categories = ["availability", "failure", "maintenance"]
-  enabled          = true
+  name        = "${var.identifier}-events"
+  sns_topic   = aws_sns_topic.rds_alarms[0].arn
+  source_type = "db-instance"
+  source_ids  = [aws_db_instance.mariadb[0].identifier]
+  event_categories = concat(
+    ["availability", "failure", "maintenance"],
+    var.multi_az ? ["failover"] : [],
+  )
+  enabled = true
 
   depends_on = [aws_sns_topic_policy.rds_alarms]
 }
