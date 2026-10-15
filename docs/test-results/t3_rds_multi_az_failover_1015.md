@@ -2,6 +2,7 @@
 
 > **결과:** 통제 Failover 1회 후 AZ 전환, 사용자 요청 복구, 두 온프렘 DB의 정상 복제 상태를 확인했다.
 > **User RTO: 12.6초.** 본 시연의 보고 기준 T0는 팀에 공유한 **AWS Failover 시작 이벤트 시각 19:05:02.313 KST**로 채택한다. 로그인·조회·저장 안정 복구 구간 시작은 19:05:14.866 KST다.
+> **발표 표기:** “T3 User RTO 12.6초 — AWS Failover 시작 이벤트 기준”. T1·T2·VPN 시연의 주입 직전 기록 시각과 T0 정의가 다르므로, 서로 다른 기준의 시간을 동등한 지표로 직접 비교하지 않는다.
 > **관측 범위:** 로그인 타임아웃 2건이 있어 무중단/실패 0건 시험은 아니다. 행 내용 정합성 전체 검증이나 RPO=0을 입증하지 않는다.
 
 ## 1. 범위와 실행 환경
@@ -24,7 +25,22 @@
 | 두 DB 경로 | db-primary 18:56:08 / db-replica 18:56:11 KST, 기존 점검 스크립트 각각 exit=0 |
 | 네트워크 | 희재 측 GO: VPN FAIL 0·ESP 2, HC_DR 16 Success, app·rosa·dr probe HTTP 200 |
 | 플랫폼 | 사용자 전달 기준 예린 측 GO 확인. 플랫폼 명령 원문은 이 결과 문서에 포함되지 않는다. |
-| 시각 동기화 | Infra VM NTPSynchronized=yes 확인. 장애 요청 PC와의 실제 시각 차이를 별도 수치로 검증한 증적은 없음 |
+| 시각 동기화 | 실행자가 T3 준비 중 `ansible@infra`에서 실행한 `timedatectl show -p NTPSynchronized` 출력으로 yes 확인. 아래 출처 참조. 장애 요청 PC와의 실제 시각 차이를 별도 수치로 검증한 증적은 없음 |
+
+### Infra VM NTP 확인 출처
+
+실행자가 T3 준비 중 공유한 터미널 출력은 다음과 같다. 확인 명령은 Infra VM의 `ansible` 계정에서 실행했으며, 이후 k6 실행은 root 계정에서 수행했다.
+
+```text
+[ansible@infra ~]$ hostname -s
+infra
+[ansible@infra ~]$ whoami
+ansible
+[ansible@infra ~]$ timedatectl show -p NTPSynchronized
+NTPSynchronized=yes
+```
+
+출력에 확인 시각이 별도로 없으므로 정확한 확인 시각은 기재하지 않는다. 이는 Infra VM의 동기화 상태 확인이며, AWS·DevOps·Infra 간 실제 시각 오차가 0임을 측정한 결과가 아니다. [확인 출처 답변](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/128#issuecomment-6189922909)과 같은 근거다.
 
 ### 별도 사전 이슈: DevOps SQL 호스트 차단
 
@@ -61,7 +77,7 @@ AWS의 `The user requested...` 이벤트는 완료 이벤트와 동일한 시각
 ### T0 정의와 복구 시간
 
 - **AWS 이벤트 간 Failover 소요:** 19:05:20.982 − 19:05:02.313 = **18.669초**.
-- **본 시연의 보고 T0:** 사용자 요청에 따라 팀에 공유한 AWS Failover 시작 이벤트 시각 **19:05:02.313 KST**를 채택한다.
+- **본 시연의 보고 T0:** 본 보고는 팀에 공유한 AWS Failover 시작 이벤트 시각 **19:05:02.313 KST**를 채택한다.
 - **User RTO = T_user − T0:** 19:05:14.866 − 19:05:02.313 = **12.553초(보고값 12.6초)**.
 - 이 지표는 **AWS Failover 시작 이벤트 → 사용자 안정 복구 구간 시작**으로 정의한다. CLI 명령 실행 직전 시각은 별도로 미기록이며, AWS 이벤트 시각을 그 시각으로 소급 주장하지 않는다.
 - k6 안정 복구 구간 시작 이후 CSV 종료까지 **350.609초(약 5분 50초)**, 추가 실패 표본 없음.
@@ -138,7 +154,7 @@ python3 /root/k6_rto_summary_1007.py \
 | User RTO (T0=AWS Failover 시작 이벤트) | **12.6초** |
 | 전체 행 내용 정합성·RPO=0 | **이 시험 증적만으로 미입증** |
 
-**발표용 표현:** “RDS Multi-AZ 통제 Failover로 Primary가 2c에서 2a로 전환됐습니다. AWS 시작~완료 이벤트는 18.669초였고, 단일 테스트 계정 k6에서는 로그인 타임아웃 2건 이후 조회·저장까지 복구됐습니다. 본 시연은 AWS Failover 시작 이벤트를 T0로 정의하며 User RTO는 12.6초입니다. 두 온프렘 DB의 약 1초 간격 기록에서는 복제 이상이 관측되지 않았습니다.”
+**발표용 표현:** “RDS Multi-AZ 통제 Failover로 Primary가 2c에서 2a로 전환됐습니다. AWS 시작~완료 이벤트는 18.669초였고, 단일 테스트 계정 k6에서는 로그인 타임아웃 2건 이후 조회·저장까지 복구됐습니다. T3 User RTO는 AWS Failover 시작 이벤트 기준 12.6초입니다. 다른 시연의 주입 직전 시각 기준과는 구분합니다. 두 온프렘 DB의 약 1초 간격 기록에서는 복제 이상이 관측되지 않았습니다.”
 
 관련: [#122 Multi-AZ 구성](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/122), [#123 통합 시연안](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123), [#124 T1 결과](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/124), [#125 T2 결과](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/125), [#127 구번호 T4 VPN 결과](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/127).
 
