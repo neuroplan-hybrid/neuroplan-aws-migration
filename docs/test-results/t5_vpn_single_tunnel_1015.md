@@ -1,10 +1,10 @@
-# T4 VPN 단일 터널 장애 — 본 시연 실측 결과 (2026-10-15)
+# T5 VPN 단일 터널 장애 (구 T4) — 본 시연 실측 결과 (2026-10-15)
 
 > **판정: 실측 범위 내 PASS (네트워크 기준).** Site-to-Site VPN 이중 터널 중 `aws-tun2`를 중단했을 때, 온프렘은 즉시 남은 터널(`aws-tun1`)로 전환했고 AWS 쪽도 약 20~21초 뒤 `aws-tun1`로 전환했다. DR 경로(probe `dr`)의 **연속 실패는 20표본(약 21초)** 으로 판정 기준(≤35초)을 만족했고, ROSA 앱 경로는 영향이 없었다. 중단 시간 약 3분 9초 동안 정현님 두 DB 연속 기록에서 이상 표본은 없었다.
 >
 > **중요:** 이 시험은 `ipsec auto --down`으로 SA를 **정상 종료(종료 알림 전송)** 한 시험이다. 알림 없이 회선이 끊기는 실제 장애와 AWS 쪽 감지 방식이 같다고 단정하지 않는다.
 
-기준: [통합 장애 시연안 PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123)이 미병합이므로 문서는 **현행 번호 T4(VPN 단일 터널 장애)** 를 사용한다. #123의 제안 번호로는 다른 번호일 수 있다. 이 PR은 실측 기록만 추가하며 Terraform·클러스터·방화벽 등 운영 설정을 변경하지 않는다. 절차 근거는 `docs/runbooks/vpn_tunnel_failure_1008.md`(#67)이다.
+번호: 10/15 18:50 이후 [통합 장애 시연안 PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123)의 Tn 기준을 따른다. VPN 단일 터널 장애는 **T5**(이전 번호 T4)이며, 실측 시점(10/15 18:02)에는 이전 번호로 불렸다. 이 PR은 실측 기록만 추가하며 Terraform·클러스터·방화벽 등 운영 설정을 변경하지 않는다. 절차 근거는 `docs/runbooks/vpn_tunnel_failure_1008.md`(#67)이다.
 
 ## 1. 환경과 사전 확인
 
@@ -115,7 +115,7 @@ AWS 쪽 전환 시간(주입 후 `aws-tun1 in` 증가까지)은 **약 20~21초**
 ## 8. 한계
 
 - 주입이 정상 종료 알림을 보내는 방식(`ipsec auto --down`)이다. 실제 회선 단절은 미시험.
-- 관측점이 DevOps VM probe 1곳과 Infra VM 로그 기준이다. 다중 사용자 무중단·User RTO·전체 5xx 0건은 주장하지 않는다. T4는 DNS 전환이 없어 Control RTO도 발생하지 않는다.
+- 관측점이 DevOps VM probe 1곳과 Infra VM 로그 기준이다. 다중 사용자 무중단·User RTO·전체 5xx 0건은 주장하지 않는다. T5는 DNS 전환이 없어 Control RTO도 발생하지 않는다.
 - 복제 기록은 약 1초 간격이다.
 - `ipsec auto --up` 출력에 `vti interface "vti2" already exists with conflicting setting (perhaps need vti-sharing=yes?` 경고가 있었으나 Child SA 수립·라우트 복귀·updown `rc=0`은 정상이었다(원인 미확인, 10/15 오전 `aws-tun1` 복구 때도 같은 경고).
 - `probe_1006.sh summary` 요약 출력 전문과 화면 캡처는 이 PR에 첨부하지 않았다(아래 증적 참조).
