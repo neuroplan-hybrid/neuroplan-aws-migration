@@ -4,21 +4,24 @@
 # 실행 위치: Infra VM (root). 기본은 읽기 전용(DRY-RUN), 실제 변경은 --apply 가 있을 때만.
 #
 # 사용법
-#   setup_vti_rpfilter_1015.sh status             현재 값과 충돌 가능 설정 조회 (변경 없음)
+#   setup_vti_rpfilter_1015.sh status             현재 값과 충돌 가능 설정 조회 (변경 없음). vti 가 없으면 SKIP(검증 안 됨)으로 표시
+#   setup_vti_rpfilter_1015.sh status --strict    위와 같되 SKIP 이 하나라도 있으면 종료 코드 1 (실행 중 값까지 확인할 때)
 #   setup_vti_rpfilter_1015.sh apply              DRY-RUN: 무엇을 바꿀지만 출력
 #   setup_vti_rpfilter_1015.sh apply --apply      실제 적용 (설정 파일 생성 + 현재 값 즉시 반영)
-#   setup_vti_rpfilter_1015.sh rollback --apply   설정 파일 제거 (현재 값은 그대로)
+#   setup_vti_rpfilter_1015.sh rollback --apply   설정 파일 철회 (완전 원복 아님: 실행 중 값은 유지, 이전 백업은 자동 복원 안 함)
 #
 # 원인 근거 (10/15 16:12 Infra VM 조회, 읽기 전용):
 #   /usr/lib/sysctl.d/50-default.conf  net.ipv4.conf.*.rp_filter = 2   (systemd 기본)
 #   /usr/lib/sysctl.d/50-redhat.conf   net.ipv4.conf.*.rp_filter = 1   (RHEL 기본, 파일명 순서상 나중이라 이쪽이 이김)
 #   현재 conf.default = 1 → 새로 생기는 인터페이스는 1로 시작하고, 생성 시 systemd-sysctl 이 '*' 항목을 적용하면 1이 됨
 #   updown 이 2를 쓰는 시점과 이 적용의 선후가 매번 같지 않으면 vti2 가 1로 남을 수 있음 (선후 자체는 로그로 확인 못함)
-#   → 파일명을 99-* 로 하고 vti1·vti2 를 이름으로 지정하면, 어느 쪽이 먼저 실행돼도 최종값이 2
+#   → 99-* 파일은 systemd-sysctl 이 적용할 때 50-redhat.conf 뒤에 읽혀 그 경로에서는 최종값이 2
+#   ※ 수동 sysctl·다른 설정 파일 등 다른 프로세스의 덮어쓰기까지 막는다고 단정하지 않음. 재부팅 후 유지는 미실측
 #
 # 건드리는 것: /etc/sysctl.d/99-neuroplan-vti-rpfilter.conf 1개, vti1·vti2 의 rp_filter 값
 # 건드리지 않는 것: ipsec 재시작, 라우트, firewalld, conf.all / conf.default, 다른 sysctl 항목
-# 종료 코드: 0 정상, 1 검증 실패, 2 사용법/권한 오류
+# 종료 코드: 0 정상, 1 검증 실패(--strict 에서는 SKIP 포함), 2 사용법/권한 오류
+# ※ status 통과는 VPN 정상 판정이 아님. 적용 후 check_vpn_state_0930.sh --aws, 역복제 상태는 별도 확인
 set -euo pipefail
 
 IFACES=(vti1 vti2)
@@ -29,12 +32,18 @@ SEARCH_PATHS="${NP_SEARCH_PATHS:-/etc/sysctl.d /run/sysctl.d /usr/lib/sysctl.d /
 
 MODE="${1:-}"
 APPLY=0
-[[ "${2:-}" == "--apply" ]] && APPLY=1
+STRICT=0
 
-usage() { sed -n '2,20p' "$0"; exit 2; }
+usage() { sed -n '2,24p' "$0"; exit 2; }
 [[ "$MODE" == "status" || "$MODE" == "apply" || "$MODE" == "rollback" ]] || usage
-if [[ -n "${2:-}" && "${2:-}" != "--apply" ]]; then usage; fi
+case "${2:-}" in
+  "") ;;
+  --apply) APPLY=1 ;;
+  --strict) STRICT=1 ;;
+  *) usage ;;
+esac
 if [[ "$MODE" == "status" && $APPLY -eq 1 ]]; then usage; fi
+if [[ "$MODE" != "status" && $STRICT -eq 1 ]]; then usage; fi
 
 read_val() {  # $1=all|default|vtiN → 값, 없으면 -
   local f="$PROC_CONF/$1/rp_filter"
@@ -59,10 +68,12 @@ show_status() {
   all="$(read_val all)"; def="$(read_val default)"
   printf '  all=%s  default=%s\n' "$all" "$def"
   local bad=0 i v eff
+  local skipped=()
   for i in "${IFACES[@]}"; do
     v="$(read_val "$i")"
     if [[ "$v" == "-" ]]; then
-      printf '  %-5s 인터페이스 없음 (터널 DOWN 이면 정상)\n' "$i"; continue
+      printf '  %-5s SKIP (인터페이스 없음 → 현재 값 검증 안 됨. 터널 DOWN 이면 정상)\n' "$i"
+      skipped+=("$i"); continue
     fi
     eff=$v; [[ "$all" =~ ^[0-9]+$ && "$all" -gt "$eff" ]] && eff=$all
     if [[ "$v" == "$WANT" ]]; then
@@ -71,6 +82,13 @@ show_status() {
       printf '  %-5s %s (유효 %s)  FAIL (기대 %s)\n' "$i" "$v" "$eff" "$WANT"; bad=1
     fi
   done
+  echo "== 현재 값 검증 요약"
+  if (( ${#skipped[@]} )); then
+    echo "  검증 안 됨(SKIP): ${skipped[*]}"
+    [[ $STRICT -eq 1 ]] && { echo "  --strict: SKIP 이 있어 실패로 처리"; bad=1; }
+  else
+    echo "  vti1·vti2 모두 현재 값 검증함"
+  fi
   echo "== 설정 파일"
   if [[ -f "$CONF_FILE" ]]; then
     if [[ "$(desired_content)" == "$(cat "$CONF_FILE")" ]]; then echo "  있음, 내용 일치: $CONF_FILE"
@@ -81,6 +99,7 @@ show_status() {
   echo "== rp_filter 를 건드리는 다른 설정 (원인 확인용, 우리 파일 제외)"
   # shellcheck disable=SC2086
   grep -rnH 'rp_filter' $SEARCH_PATHS 2>/dev/null | grep -v "$(basename "$CONF_FILE")" | sed 's/^/  /' || true
+  echo "※ status 통과는 VPN 정상 판정이 아님. check_vpn_state_0930.sh --aws 와 역복제 상태를 별도로 확인할 것"
   return $bad
 }
 
@@ -133,9 +152,18 @@ do_rollback() {
   if [[ ! -f "$CONF_FILE" ]]; then echo "$tag 설정 파일 없음 → 할 일 없음"; return 0; fi
   if [[ $APPLY -eq 1 ]]; then
     mv "$CONF_FILE" "$CONF_FILE.removed.$(date +%m%d-%H%M%S)"
-    echo "$tag 설정 파일을 .removed.* 로 옮김. 현재 rp_filter 값은 그대로, 재부팅 후에는 OS 기본값으로 돌아감"
+    echo "$tag 설정 파일을 .removed.* 로 옮김. 이는 추가한 영구 설정의 철회이며 완전 원복이 아님"
+    echo "$tag 실행 중 rp_filter 값은 그대로 유지됨. 재부팅 후에는 OS 기본값(50-redhat.conf 의 1)이 다시 적용될 수 있음"
   else
-    echo "$tag $CONF_FILE 를 제거 예정 (현재 값은 유지)"
+    echo "$tag $CONF_FILE 를 .removed.* 로 옮길 예정 (철회일 뿐 완전 원복 아님, 실행 중 값은 유지)"
+  fi
+  local baks=()
+  shopt -s nullglob
+  baks=("$CONF_FILE".bak.*)
+  shopt -u nullglob
+  if (( ${#baks[@]} )); then
+    echo "$tag 이전 백업이 있음 (자동 복원하지 않음): ${baks[*]}"
+    echo "$tag 복원하려면 직접: mv <위 백업 중 하나> $CONF_FILE"
   fi
 }
 
