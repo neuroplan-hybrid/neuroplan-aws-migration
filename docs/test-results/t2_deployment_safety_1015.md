@@ -4,7 +4,7 @@
 >
 > **중요:** 이 테스트는 **잘못된 컨테이너 이미지/이미지 태그를 배포한 시험이 아니다.** 기존 이미지 태그는 유지하고 **신규 Pod의 Readiness Probe 경로만 의도적으로 잘못 설정한 RollingUpdate 안전성 시험**이다. T2 결과를 '불량 이미지 버전의 롤백'으로 표현하지 않는다.
 
-기준: [통합 장애 시연안 PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123), **T2 — Deployment Safety**. 실측 기록만 추가하며 이 보고서 PR은 클러스터/Terraform/GitOps 운영 설정을 변경하지 않는다.
+기준: [통합 장애 시연안 PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123)의 **제안 번호 T2 — Deployment Safety**를 사용한다. PR #123은 아직 미병합이므로 이 번호는 최종 채택 번호가 아닐 수 있다. 실측 기록만 추가하며 이 보고서 PR은 클러스터/Terraform/GitOps 운영 설정을 변경하지 않는다.
 
 ## 1. 환경과 안전 설정
 
@@ -64,7 +64,7 @@ GitOps 변경 링크:
 | 시각 | 확인 내용 |
 | --- | --- |
 | 12:47:27.420 | k6 CSV 측정 시작 |
-| 12:50:09 | GitOps PR #19 병합; Argo CD Auto Sync 대상 변경 |
+| 12:50:09 | GitOps PR #19 병합; Argo CD Auto Sync 대상 변경 (신규 RS 실제 생성까지 **1분 58초 간격**, 발생 원인 미확인) |
 | **12:52:07.000** | **T0: 신규 실패 ReplicaSet `neuroplan-backend-696b7bd548`의 `metadata.creationTimestamp=2026-10-15T03:52:07Z`** |
 | T0 후 실측 | Argo CD revision `d97f35c2...` / Synced / Progressing, 기존 RS Ready 2/2, 신규 RS Ready 0/1 |
 | T0 후 실측 | 기존 두 Endpoint `ready=true`; 신규 실패 Pod `10.128.0.42`는 EndpointSlice에 존재하나 `ready=false` |
@@ -72,7 +72,7 @@ GitOps 변경 링크:
 | 원복 반영 확인 (정확한 시각 미수집) | Argo CD revision `083d0062...` / Synced / Healthy, Backend 2/2 Ready·UP-TO-DATE 2·AVAILABLE 2; 실패 RS 0/0/0, 정상 경로 복귀 |
 | **12:58:08.562** | **k6 CSV 마지막 측정 레코드** (T0 이후 6분 1.562초; ROSA 실제 복구 완료 시각과 구분) |
 
-**T0 기준 주의:** 신규 ReplicaSet의 생성 시각을 장애 주입 관찰 기준점으로 사용했다. 이는 PR 병합 시각이나 첫 Readiness Probe 실패 시각과 다르며, 후자의 정확한 시각은 별도 수집하지 않았다. 원복의 Argo CD Healthy 도달 시각 또한 초 단위로 기록하지 않았으므로 **복구 소요 시간/RTO 수치를 계산하지 않는다**.
+**T0 기준 주의:** 신규 ReplicaSet의 생성 시각을 장애 주입 관찰 기준점으로 사용했다. 이는 PR 병합 시각이나 첫 Readiness Probe 실패 시각과 다르며, 후자의 정확한 시각은 별도 수집하지 않았다. **PR #19 병합(12:50:09)부터 RS 생성(12:52:07)까지 1분 58초가 걸린 원인은 미확인**이다. Argo CD 새로고침/자동 동기화 동작과의 관련성을 별도 조사하지 않았으므로 단순히 폴링 주기 때문이라고 단정하지 않는다. 원복의 Argo CD Healthy 도달 시각 또한 초 단위로 기록하지 않았으므로 **복구 소요 시간/RTO 수치를 계산하지 않는다**.
 
 ## 4. Pod / ReplicaSet / Endpoint 실측
 
@@ -148,12 +148,14 @@ T0 (장애 주입)      : 12:52:07.000
        login 1건, state 348건, save 348건
 ~~~
 
+위 분석기 출력의 `[연속성 T1·T2·T5·T8]`은 **분석 스크립트에 고정된 내부 테스트 유형 라벨**이며, 본 보고서의 T2 명칭이 [PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123)에서 제안된 번호라는 사실과 구분한다.
+
 **정확한 주장 범위:**
 - `step_ok` 697건은 **검증 단계 수**로, 전체 HTTP 요청 수나 동시 사용자 수가 아니다.
 - T0 이후 **로그인 1회**가 성공했지만 로그인 요청 1건의 p95/p99(579ms)를 의미 있는 분포 지표로 일반화하지 않는다.
 - `LOGIN_MODE=session`의 1 VU 테스트이므로 다중 사용자 고부하나 모든 서비스 API의 무중단, 전체 HTTP 5xx 0건을 입증하지 않는다.
 - 계획 실행 시간은 15분이었으나 실제 CSV 측정은 **약 10분 41초**다.
-- 연결 IP가 `15.165.65.7`(12:47:27.420~12:52:08.014)에서 `54.180.48.186`(12:52:09.048~12:58:08.562)로 바뀌었다. **IP 변화만으로 DR 전환, 라우팅 장애 또는 DNS Failover를 단정하지 않는다.**
+- k6에서 연결 대상 **ROSA NLB 공인 IP가 변경되어 관측**됐다(공개 문서에서는 변동 가능한 실제 IP를 각각 `ROSA_NLB_IP_A`, `ROSA_NLB_IP_B`로 마스킹). 최초 관측 구간 **12:47:27.420~12:52:08.014**는 `ROSA_NLB_IP_A`, 이후 **12:52:09.048~12:58:08.562**는 `ROSA_NLB_IP_B`로 기록됐다. **이 IP 변화만으로 DR 전환, 라우팅 장애 또는 DNS Failover를 단정하지 않는다.** 원본 주소는 k6 CSV에서 확인할 수 있다.
 
 ## 6. 판정
 
@@ -168,7 +170,7 @@ T0 (장애 주입)      : 12:52:07.000
 | GitOps 원복 / Argo CD Synced·Healthy / 정상 Probe 경로 복귀 | **PASS** |
 | 실제 잘못된 이미지 빌드·태그 교체 / 신규 digest 검증 | **수행하지 않음** |
 | 전체 사이트 5xx 0건 / 다중 사용자 부하 / DR 전환 | **미검증 / 범위 외** |
-| Grafana RS Ready 시계열 캡처 원본 제출 | **별도 첨부 필요** |
+| Grafana RS Ready 시계열 캡처 원본 제출 | **현재 미첨부 — 후속 증적 확보 시 첨부 예정** |
 
 **발표용 표현:** “ROSA Backend RollingUpdate 중 신규 Pod의 Readiness Probe 오류를 의도적으로 주입했습니다. 신규 ReplicaSet은 Ready 0/1로 서비스에서 제외됐지만, 기존 정상 Pod 2개와 서비스 Endpoint가 유지됐습니다. T0 이후 k6 로그인·조회·저장 검증 697건에서 실패 0건을 기록했고, GitOps 원복 후 Argo CD Synced/Healthy와 Backend 2/2를 확인했습니다.”
 
@@ -178,7 +180,7 @@ T0 (장애 주입)      : 12:52:07.000
 - GitOps 정상 원복 PR: https://github.com/neuroplan-hybrid/neuroplan-gitops/pull/20
 - k6 원본 CSV: **Infra VM `/root/k6_t2.csv`** (이 문서 PR에는 미업로드)
 - k6 분석 스크립트: **Infra VM `/root/k6_rto_summary_1007.py`** (동일 스크립트가 마이그레이션 저장소 `scripts/k6_rto_summary_1007.py`에도 존재)
-- Grafana: 기존 RS `neuroplan-backend-594d678765` / 신규 RS `neuroplan-backend-696b7bd548` 선택 화면 캡처 필요 (이 문서 PR에 미업로드)
+- Grafana: 기존 RS `neuroplan-backend-594d678765` / 신규 RS `neuroplan-backend-696b7bd548` 선택 화면 캡처는 **현재 PR에 첨부되지 않았다.** 화면 증적을 확보할 수 있으면 별도로 첨부할 예정이며, 현재 보고서의 판정은 Kubernetes 명령 출력과 k6 수치에 근거한다.
 - k6 HTML 대시보드 및 관련 스냅샷: 보관 여부 확인 후 별도 첨부 필요; 생성 완료를 주장하지 않음
 
 관련: [T1 결과 PR #124](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/124), [통합 시연안 PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123).
