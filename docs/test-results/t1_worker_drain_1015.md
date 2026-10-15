@@ -62,6 +62,7 @@
 | Save 응답시간 p95 / p99 | 54ms / 88ms | **59ms / 96ms** |
 
 - 스크립트 출력: **[연속성 T1·T2·T5·T8] PASS — T0 이후 사용자 실패 0건 (허용 0건)**.
+- **표기 주의:** `[연속성 T1·T2·T5·T8]`은 `k6_rto_summary_1007.py` 분석기의 **공통 연속성 판정 라벨**이다. 본 문서에서 실제 수행·판정한 시험은 [PR #123의 제안 번호](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123) 기준 **T1 Worker Drain만** 해당한다. 라벨에 포함된 다른 시험까지 실행 완료했다는 뜻은 아니다.
 - k6는 15분으로 설정했으나 **실제 측정은 약 7분 28초**에서 종료했다. 발표에서 15분 연속 검증이라고 표현하지 않는다.
 - 로그인 단계는 T0 이전 1회 수행되었으므로 **T0 이후 신규 로그인 무중단은 이번 본 측정으로 입증하지 않았다**. 세션 기반 상태 조회·저장만 T0 이후 검증했다.
 - 시험은 단일 테스트 계정의 1 VU 요청이므로 다중 사용자 부하 테스트 또는 전체 사용자 100% 무중단을 의미하지 않는다.
@@ -81,11 +82,24 @@ python3 /root/k6_rto_summary_1007.py \
 PR #123 네트워크 담당 [독립 관측 댓글](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123#issuecomment-6183648409)과 대조:
 
 - 12:07~12:17 Route 53 HC 관측 및 12:06 이후 외부 앱 probe에서 **앱 경로 비정상 0행**, **HC_ROSA Failure 0**, **권한 DNS의 온프렘 전환 없음(ROSA 유지)** 보고.
-- **12:12:28~12:12:33**: primary-health probe 기준 0.9초 초과 **timeout 3회** 보고. Route 53 Health Checker의 Failure와는 구분한다. T0 직후이지만 Drain이 직접 원인인지 확정하지 않는다.
-- **12:13:34**: ROSA NLB IP 하나 교체 보고. k6 연결 응답 IP가 12:12:09 전후 변경된 현상은 별도 확인 사항이며, 이를 DR 전환 증거로 해석하지 않는다.
+- **12:12:28, 12:12:31, 12:12:33**: primary-health probe 기준 0.9초 초과 **timeout 3회**를 네트워크 담당자가 원본으로 재확인했다. **연속 timeout이 아닌 각각 단발 관측이며 사이 구간에는 HTTP 200 응답이 있었다.** Route 53 Health Checker의 Failure와 구분하고, Drain이 직접 원인인지는 확정하지 않는다.
+- **12:13:34**: ROSA NLB IP 하나 교체 보고. k6 연결 응답 IP가 12:12:09 전후 변경된 현상은 별도 확인 사항이며, 이를 DR 전환 증거로 해석하지 않는다. 참고로 [T2 결과 PR #125의 네트워크 독립 관측](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/125#issuecomment-6184199856)에서는 권한 DNS가 **NLB IP 두 개를 동시에 반환**했고 외부 probe의 직접 접속 IP가 둘 사이를 오가는 현상이 확인됐다. **T1 당시의 k6 DNS 조회는 검증하지 않았으므로**, T1 IP 변경 역시 같은 원인이라고 단정하지 않는다.
 - 네트워크 담당의 질문([12:12:30 HTTP 200 그래프 관련](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123#issuecomment-6183714140))에 대한 시연 구분: **이때 실행한 것은 T1 Worker Drain이며 T2 RollingUpdate / Git revert 시연이 아니다**. k6의 측정된 상태 조회/저장 실패는 0건이나, 특정 Grafana 패널의 순간적인 200 그래프 저하는 패널 PromQL·scrape·series 전환 등을 확인하기 전까지 원인을 단정하지 않는다.
 - Grafana에서 **'수집 대상 이상'** 및 **'선택 기간 HTTP 5xx 건수 (추정)' 증가**가 관찰되었다는 사용자 보고가 있다. 패널 쿼리·집계 대상·정확한 원시 5xx 응답은 미확인이다. **k6 step_ok 실패 0건이 Grafana 전체 HTTP 5xx 0건을 보증하지 않는다.**
 - 테스트 후 Drain 대상 10.20.47.36의 node-exporter 2/2 Running (restart 0), Prometheus 2개 6/6 Running, Metrics Server 2개 Running, Monitoring/Ingress Operator 정상 확인. 당시 수집 이상 원인과 범위는 **추가 분석 필요**.
+
+### Grafana 관측 이상 후속 확인 계획 (아직 미해결)
+
+| 항목 | 후속 조치 |
+| --- | --- |
+| 확인 역할 | **T1 시연 담당 + 모니터링/Grafana 담당 협업** (구체 담당자 지정·확정 필요) |
+| 점검 시점 | **최종 발표 전**. 별도의 점검 완료 시각은 현재 미정 |
+| 확인 대상 | T0 전후 Grafana '수집 대상 이상', 'HTTP 5xx 건수 (추정)' 패널 및 HTTP 200 변동 |
+| 확인 방법 | 패널 PromQL과 범례/집계 대상 확인, Prometheus scrape 상태·series 변동, 가능하면 원시 HTTP 상태코드 및 앱·Router 로그와 k6 CSV 대조 |
+| 증적 및 기준 | 패널 시각/쿼리·스크린샷 또는 조사 결과를 별도 첨부하고, **패널 수치와 실제 사용자 요청 실패 여부를 구분**해 해석 |
+| 현재 상태 | **담당자 확정·원인 규명·재검증 미완료**. T1의 측정 범위 내 PASS와는 별도 미해결 항목 |
+
+담당 역할과 발표 전 확인 시점은 **권고 계획**이지 담당자 배정이나 재검증을 이미 완료했다는 기록이 아니다.
 
 ## 5. 최종 판정과 후속 확인
 
@@ -97,7 +111,7 @@ PR #123 네트워크 담당 [독립 관측 댓글](https://github.com/neuroplan-
 | OpenShift Router 2개 및 Cluster Operator 21/21 정상 | **PASS** |
 | k6 T0 이후 상태 조회·저장 연속성 (594건 / 실패 0) | **PASS** |
 | T0 이후 신규 로그인 / 전체 사이트 5xx 0건 | **미검증** |
-| Grafana 5xx 추정 패널 / 수집 대상 이상 원인 | **미해결, 쿼리·스크레이프 점검 필요** |
+| Grafana 5xx 추정 패널 / 수집 대상 이상 원인 | **미해결; 발표 전 T1·모니터링 담당 합동 점검 계획 (실명 지정 필요)** |
 | T2 비정상 배포 차단 | **별도 테스트, 이 결과에 포함되지 않음** |
 
 **발표용 안전한 표현:** "ROSA Worker 1대에 대해 통제 Drain을 실시하여 Backend Pod가 다른 Worker에 재생성되고 Replica 2/2가 회복되는 것을 확인했습니다. T0 이후 k6 상태 조회·저장 594건은 실패 0건으로 서비스 연속성 목표를 충족했고, Worker 및 OpenShift 운영 구성 요소가 정상 복구됐습니다."
