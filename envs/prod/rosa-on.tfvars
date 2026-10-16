@@ -17,8 +17,8 @@ route53_routing_mode = "weighted" # 10/13 전환: LB DNS 입력과 같은 커밋
 #   ⑤ ROSA TLS preflight 통과 (#59: Route externalCertificate·Router RBAC·외부 HTTPS SAN/Issuer) — 실패하면 off 유지 (weight 0도 양수 레코드가 모두 unhealthy면 응답 후보)
 # ROSA Router NLB (openshift-ingress/router-default, Type=network → Zone ID는 모듈 기본 NLB 값 사용, 10/13 describe-load-balancers·태그 확인)
 primary_lb_dns_name = "af7cae78d814d43e29f90033ed68a527-7820ebba64c0c69b.elb.ap-northeast-2.amazonaws.com"
-rosa_weight         = 1
-onprem_weight       = 0
+rosa_weight         = 0
+onprem_weight       = 1
 
 # ROSA HCP Worker
 # 공식 기본값과 비용 산정 기준을 명시적으로 고정한다.
