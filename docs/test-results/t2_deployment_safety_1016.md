@@ -1,16 +1,22 @@
 # T2 Deployment Safety — Readiness 실패 주입·GitOps 복구 재시연 결과 (2026-10-16)
 
+## 재시연 배경 — 두 Grafana 대시보드 코드 통합 후 패널 설정 오류
+
+2026-10-15 기존 T2 테스트에서는 **신규 NotReady Pod의 트래픽 제외, 기존 정상 Pod 2개 유지, GitOps 원복 및 k6 연속성 검증(PASS)**을 확인했으나, 장애 전·중·후를 시각적으로 비교할 **Grafana 대시보드 증적의 정확도**를 보완할 필요가 있었다.
+
+**Grafana 대시보드 코드 두 개를 통합하는 과정**에서 T2 **'기존·신규 Pod Ready 변화'** 패널에 다음과 같은 설정 문제가 확인되었다.
+
+- **시계열 패널 오류:** `Data does not have a time field` 표시. Prometheus 쿼리의 **Range/Instant 모드**, Grafana **Time series** 형식 및 **시간 필드를 제거하는 Transformation** 적용 여부를 점검할 필요가 있었다.
+- **ReplicaSet 변수 매핑 오류:** 기존 RS·신규 RS 선택값이 **모두 `neuroplan-backend-db8bd9bb5`**로 잡혀 두 상태를 올바르게 구분하지 못했다. 2026-10-16 T2 재시연에서는 **기존 정상 RS `neuroplan-backend-584495dbb6`**와 **신규 실패 RS `neuroplan-backend-bf4b9d995`**를 각각 구분해 확인해야 한다.
+- **검증 기준 쿼리:** 기존 정상 RS의 Ready 수는 `kube_replicaset_status_ready_replicas{namespace="neuroplan",replicaset="neuroplan-backend-584495dbb6"}`와 같이 RS를 명시해 조회할 수 있다. 신규 실패 RS에도 별도 RS 조건을 적용해 **기존 2/2 유지와 신규 0/1 상태를 독립적으로 비교**해야 한다.
+
+따라서 **통합 대시보드의 시계열 설정·변수 매핑을 점검하고 모니터링 증적을 보완**하기 위해 2026-10-16 T2를 **재시연**했다. 재시연에서 Kubernetes 상태와 k6 로그인 1/1·조회 434/434·저장 434/434 성공을 보고받았으나, **Grafana의 모든 설정 수정 완료 및 최종 화면 캡처 확보는 별도 확인 사항**이다. 기존 T2가 실패했거나 실제 서비스 장애가 확인되어 재시연한 것은 아니다.
+
 > **최종 판정: PASS (관측·k6 측정 범위 내).** ROSA Backend의 신규 ReplicaSet에만 의도적으로 잘못된 Readiness Probe 경로를 반영했다. 기존 정상 RS 2/2 Ready를 유지하는 동안 신규 RS 0/1 Ready 및 EndpointSlice `ready=false`를 확인했고, GitOps 원복 후 실패 RS 0/0/0·Backend 2/2·Argo CD Synced/Healthy로 돌아왔다. Infra VM의 k6 상세 분석 결과는 로그인 1/1·조회 434/434·저장 434/434 모두 성공, 응답 HTTP 200, 실패 상세 없음(**정현 담당자 보고 기준**)이다.
 >
 > **중요:** **불량 컨테이너 이미지 배포 시험이 아니다.** 이미지 태그를 그대로 유지하고 **신규 Backend PodTemplate의 Kubernetes Readiness Probe 경로만 잘못 설정한 통제된 배포 안전성 테스트**이다. 자동 트래픽 격리는 Readiness/Service가 수행했고, **원복은 GitOps PR을 수동 병합**해 수행했다.
 
 기준: [통합 장애 시연안 PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123)의 T2 Deployment Safety 번호. 이 문서는 **2026-10-16 재시연 결과를 현재 대표 T2 결과로 기록**한다. 2026-10-15의 이전 T2 결과 문서(`t2_deployment_safety_1015.md`)는 같은 PR에서 `main`의 최신 문서 목록에서 제외하며, 이전 실행 내역과 병합 이력은 [PR #125](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/125)에 보존한다. GitHub 문서 작성자는 사용자 공유 `oc` 출력·GitOps 변경 이력·담당자 k6 분석 보고를 근거로 했으며, 원본 CSV를 직접 재분석한 것은 아니다.
-
-## 재시연 배경 — Grafana 지표 및 증적 점검
-
-2026-10-15 기존 T2 테스트에서는 Kubernetes의 배포 보호 동작과 k6 연속성 검증이 **측정 범위 내 PASS**였으나, Grafana 대시보드의 지표 표시·시각화 설정을 확인하고 **Before/During/After 그래프 증적을 보강**할 필요가 있었다. 같은 날 T1에서는 '수집 대상 이상' 및 HTTP 5xx 추정 패널에 대한 원시 지표·스크랩 상태 확인 과제도 남았다.
-
-이러한 모니터링 증적 보완 목적에서 **대시보드 설정을 점검·수정하고 테스트를 재검증하는 흐름**으로 2026-10-16 T2를 재시연했다. 이는 10/15 테스트가 실패했거나 실제 서비스 장애가 입증되었다는 의미가 아니다. **10/16 재시연 자체는 수행되었지만 Grafana 패널의 수정 완료·원인 규명 및 최종 화면 캡처 확보는 이 보고서의 자료만으로 확정하지 않는다.**
 
 ## 1. 시험 환경과 주입 방법
 
