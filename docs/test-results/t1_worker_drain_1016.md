@@ -6,7 +6,6 @@
 
 - **지표 의미 구분:** Prometheus `up`은 메트릭 스크랩 성공 여부이며 실제 HTTP 5xx 응답 건수가 아니다. Pod 교체 중 일시적인 `up=0`이 관측됐다는 이유만으로 서비스에서 5xx가 발생했다고 확정하지 않는다.
 - **재검증 목적:** Worker Drain 전·중·후의 Scheduling 상태, Pod 재배치·Readiness, k6 조회·저장 성공 여부를 원시 메트릭·Grafana 표시와 대조하여 T1 모니터링 증적의 해석 정확도를 높인다.
-- **별도 T2 이슈:** 두 Grafana 대시보드 코드 통합에 따른 T2 ReplicaSet 시계열·변수 매핑 문제는 [T2 재시연 PR #138](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/138)에서 설명한다. 이 문제를 T1 수집 표시의 원인으로 단정하지 않는다.
 
 이러한 증적 보완 목적으로 **2026-10-16 T1을 재시연**해 Pod 재배치·Uncordon·Argo CD 정상화와 **k6 전체 구간 로그인 1/1, 상태 조회 170/170, 저장 170/170 성공**을 기록했다. 기존 테스트가 실패했다는 의미는 아니다.
 
