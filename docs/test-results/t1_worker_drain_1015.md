@@ -85,7 +85,7 @@ PR #123 네트워크 담당 [독립 관측 댓글](https://github.com/neuroplan-
 - **12:12:28, 12:12:31, 12:12:33**: primary-health probe 기준 0.9초 초과 **timeout 3회**를 네트워크 담당자가 원본으로 재확인했다. **연속 timeout이 아닌 각각 단발 관측이며 사이 구간에는 HTTP 200 응답이 있었다.** Route 53 Health Checker의 Failure와 구분하고, Drain이 직접 원인인지는 확정하지 않는다.
 - **12:13:34**: ROSA NLB IP 하나 교체 보고. k6 연결 응답 IP가 12:12:09 전후 변경된 현상은 별도 확인 사항이며, 이를 DR 전환 증거로 해석하지 않는다. 참고로 [T2 결과 PR #125의 네트워크 독립 관측](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/125#issuecomment-6184199856)에서는 권한 DNS가 **NLB IP 두 개를 동시에 반환**했고 외부 probe의 직접 접속 IP가 둘 사이를 오가는 현상이 확인됐다. **T1 당시의 k6 DNS 조회는 검증하지 않았으므로**, T1 IP 변경 역시 같은 원인이라고 단정하지 않는다.
 - 네트워크 담당의 질문([12:12:30 HTTP 200 그래프 관련](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123#issuecomment-6183714140))에 대한 시연 구분: **이때 실행한 것은 T1 Worker Drain이며 T2 RollingUpdate / Git revert 시연이 아니다**. k6의 측정된 상태 조회/저장 실패는 0건이나, 특정 Grafana 패널의 순간적인 200 그래프 저하는 패널 PromQL·scrape·series 전환 등을 확인하기 전까지 원인을 단정하지 않는다.
-- Grafana에서 **'수집 대상 이상'** 및 **'선택 기간 HTTP 5xx 건수 (추정)' 증가**가 관찰되었다는 사용자 보고가 있다. 패널 쿼리·집계 대상·정확한 원시 5xx 응답은 미확인이다. **k6 step_ok 실패 0건이 Grafana 전체 HTTP 5xx 0건을 보증하지 않는다.**
+- 초기 사용자 보고에는 Grafana **'수집 대상 이상'** 및 **'선택 기간 HTTP 5xx 건수 (추정)' 증가**가 포함됐으나, 10/16 과거 지표 조회에서는 신규 Pod scrape 실패와 경고 표시 조건을 확인했고 Backend 업무 5xx 시계열은 관측되지 않았다. 상세 후속 결과는 아래에 구분하며, **k6 step_ok 실패 0건이 전체 사이트 HTTP 5xx 0건을 보증하지 않는다는 제한은 유지**한다.
 - 테스트 후 Drain 대상 10.20.47.36의 node-exporter 2/2 Running (restart 0), Prometheus 2개 6/6 Running, Metrics Server 2개 Running, Monitoring/Ingress Operator 정상 확인. 당시 수집 이상에 대한 **10/16 후속 확인 결과와 남은 검증 범위는 아래에 구분**한다.
 
 ### Grafana 관측 이상 후속 확인 (10/16 과거 시계열 재조회)
