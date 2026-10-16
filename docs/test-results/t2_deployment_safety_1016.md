@@ -4,7 +4,7 @@
 >
 > **중요:** **불량 컨테이너 이미지 배포 시험이 아니다.** 이미지 태그를 그대로 유지하고 **신규 Backend PodTemplate의 Kubernetes Readiness Probe 경로만 잘못 설정한 통제된 배포 안전성 테스트**이다. 자동 트래픽 격리는 Readiness/Service가 수행했고, **원복은 GitOps PR을 수동 병합**해 수행했다.
 
-기준: [통합 장애 시연안 PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123)의 T2 Deployment Safety 번호. 이 문서는 기존 [2026-10-15 T2 결과](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/blob/main/docs/test-results/t2_deployment_safety_1015.md)와 **별개인 2026-10-16 재시연**을 기록한다. GitHub 문서 작성자는 사용자 공유 `oc` 출력·GitOps 변경 이력·담당자 k6 분석 보고를 근거로 했으며, 원본 CSV를 직접 재분석한 것은 아니다.
+기준: [통합 장애 시연안 PR #123](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/123)의 T2 Deployment Safety 번호. 이 문서는 **2026-10-16 재시연 결과를 현재 대표 T2 결과로 기록**한다. 2026-10-15의 이전 T2 결과 문서(`t2_deployment_safety_1015.md`)는 같은 PR에서 `main`의 최신 문서 목록에서 제외하며, 이전 실행 내역과 병합 이력은 [PR #125](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/125)에 보존한다. GitHub 문서 작성자는 사용자 공유 `oc` 출력·GitOps 변경 이력·담당자 k6 분석 보고를 근거로 했으며, 원본 CSV를 직접 재분석한 것은 아니다.
 
 ## 1. 시험 환경과 주입 방법
 
