@@ -48,6 +48,13 @@ rds_apply_immediately          = true
 # #94 합의: rosa-on.tfvars와 동일한 RDS 알람 설정을 유지해 후속 operation Apply 시 삭제를 방지한다.
 # CloudWatch Alarm / SNS 실제 적용은 별도 최종 Plan·승인 후 진행한다.
 enable_rds_cloudwatch_alarms = true
+
+# #115: VPN 2 + DR NLB 1 + ROSA HTTPS NLB 1 — already applied in production.
+# Preserve these four alarms across operation/rosa-on plans. To avoid exposing
+# infrastructure ARNs in Git, supply verified rosa_nlb_alarm_targets from the
+# existing private network-alarms-on.tfvars.json (or approved auto.tfvars).
+# Without the private targets, the Terraform validation intentionally fails closed.
+enable_network_cloudwatch_alarms = true
 # 운영 RDS 실측 max_connections=30 (2026-10-13)의 80%에서 사전 경고.
 rds_database_connections_alarm_threshold = 24
 
