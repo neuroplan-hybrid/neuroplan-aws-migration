@@ -13,7 +13,7 @@
 | 환경 | AWS ap-northeast-2 ROSA HCP(Primary) ↔ 온프렘 DR(VPN 경유 DR NLB) |
 | 라우팅 | Route 53 Weighted(`app`), HC `primary-health`(ROSA)·`dr-health`(온프렘), 경로 `/actuator/health/routing` |
 | 쓰기 차단 | 양쪽 `DEMO_WRITE_FENCE`(ConfigMap + PodTemplate annotation 롤링) |
-| DB | 운영 RDS(Multi-AZ) 복제 → 온프렘 `db-primary`·`db-replica`, T6에서 `db-primary` 승격 |
+| DB | 운영 RDS 복제 → 온프렘 `db-primary`·`db-replica`, T6에서 `db-primary` 승격. Multi-AZ: tfvars `rds_multi_az=true`, 실제 운영 RDS `neuroplan-rds-operation` `MultiAZ=True`·`available` 확인(2026-10-16 19:55경, `aws rds describe-db-instances`, 희재 실행) |
 | 측정 | probe(1초, 권한 NS 직접 조회·실제 연결 사이트), k6(`LOGIN_MODE=iter`, 로그인→조회→저장, 1 VU 전용 계정), Fence 관측 루프(5초) |
 | 지표 구분 | Control RTO(DNS 전환, probe) / 읽기 복구(보조) / 쓰기 재개(k6) / 쓰기 불가 전체 구간 |
 
@@ -46,7 +46,7 @@
 
 ## 4. GTID 증가 STOP과 판정
 
-- 증상: 승격(11:47:00) 이후에도 RDS GTID가 `4639` → `4640`~`4646`으로 증가. 승격 후 RDS에 쓰기가 계속 들어오면 유실·split-brain 위험이 있어 쓰기 재개를 멈춤
+- 증상: `db-primary` 승격(11:45:39) 후(11:47:00 제한 쓰기·재조회 검증)에도 RDS GTID가 `4639` → `4640`~`4646`으로 증가. 승격 후 RDS에 쓰기가 계속 들어오면 유실·split-brain 위험이 있어 쓰기 재개를 멈춤
 - 후보 제외: k6(12:00:35.959 중지 후에도 증가), 로그인 확인 루프(12:06:43 종료 후에도 12:11:45~12:12:15에 `4645 → 4646`). 약 34분에 7회, 5분 안팎 주기
 - 원인(정현 보고): GTID 4640~4646은 모두 `mysql.rds_heartbeat2` heartbeat INSERT/UPDATE 후 COMMIT. 7개 구간에 다른 Query·DDL·트랜잭션 없음. 원본 binlog 출력은 정현 보관(희재 미확인)
 - **RPO (정현 보고)**: Fence 직전 마지막 저장(11:36:44.209, `completed=0`)이 승격 전(11:45:05) `db-primary`에서 `step_id=442 PENDING`, `updated_at=11:36:44.184739`로 같은 저장 상태. 이후 재개 k6가 같은 행을 다시 토글해 현재 `updated_at`은 근거로 쓰지 않음
@@ -81,6 +81,7 @@
 - 단일 관측점(DevOps probe + Infra Fence 루프), 5초 해상도라 1초 단발은 놓칠 수 있음. 1 VU·계정 1개
 - probe 단발 비정상(app 21 / dr 28)과 `auth='-'` 41행의 원인 미확인(probe VM 순간 끊김 가능성, 추정)
 - Route 53 전환 직후 약 6초 rosa↔onprem 왕복 원인 미확정
+- 12:31:21.906(30초 연속 성공 확인)은 원본 k6 CSV 재검증 전
 - 이 시연은 ROSA 쓰기 차단 + DB 승격 + DNS 전환을 한 시나리오로 연결했지만 "ROSA 클러스터 자체가 없어진 경우"는 시험하지 않음
 - 테스트 계정 이메일·IP·HC ID는 이 문서에 적지 않음
 
