@@ -10,7 +10,7 @@
 - **ReplicaSet 변수 매핑 오류:** 기존 RS·신규 RS 선택값이 **모두 `neuroplan-backend-db8bd9bb5`**로 잡혀 두 상태를 올바르게 구분하지 못했다. 2026-10-16 T2 재시연에서는 **기존 정상 RS `neuroplan-backend-584495dbb6`**와 **신규 실패 RS `neuroplan-backend-bf4b9d995`**를 각각 구분해 확인해야 한다.
 - **검증 기준 쿼리:** 기존 정상 RS의 Ready 수는 `kube_replicaset_status_ready_replicas{namespace="neuroplan",replicaset="neuroplan-backend-584495dbb6"}`와 같이 RS를 명시해 조회할 수 있다. 신규 실패 RS에도 별도 RS 조건을 적용해 **기존 2/2 유지와 신규 0/1 상태를 독립적으로 비교**해야 한다.
 
-따라서 **통합 대시보드의 시계열 설정·변수 매핑을 점검하고 모니터링 증적을 보완**하기 위해 2026-10-16 T2를 **재시연**했다. 재시연에서 Kubernetes 상태와 k6 로그인 1/1·조회 434/434·저장 434/434 성공을 보고받았으나, **Grafana의 모든 설정 수정 완료 및 최종 화면 캡처 확보는 별도 확인 사항**이다. 기존 T2가 실패했거나 실제 서비스 장애가 확인되어 재시연한 것은 아니다.
+따라서 **통합 대시보드의 시계열 설정·변수 매핑을 점검하고 모니터링 증적을 보완**하기 위해 2026-10-16 T2를 **재시연**했다. 같은 날 앞서 진행한 [T1 Worker Drain 재시연 PR #137](https://github.com/neuroplan-hybrid/neuroplan-aws-migration/pull/137)과는 **별개의 장애 주입 및 k6 측정 구간**이다. 재시연에서 Kubernetes 상태와 k6 로그인 1/1·조회 434/434·저장 434/434 성공을 보고받았으나, **Grafana의 모든 설정 수정 완료 및 최종 화면 캡처 확보는 별도 확인 사항**이다. 기존 T2가 실패했거나 실제 서비스 장애가 확인되어 재시연한 것은 아니다.
 
 > **최종 판정: PASS (관측·k6 측정 범위 내).** ROSA Backend의 신규 ReplicaSet에만 의도적으로 잘못된 Readiness Probe 경로를 반영했다. 기존 정상 RS 2/2 Ready를 유지하는 동안 신규 RS 0/1 Ready 및 EndpointSlice `ready=false`를 확인했고, GitOps 원복 후 실패 RS 0/0/0·Backend 2/2·Argo CD Synced/Healthy로 돌아왔다. Infra VM의 k6 상세 분석 결과는 로그인 1/1·조회 434/434·저장 434/434 모두 성공, 응답 HTTP 200, 실패 상세 없음(**정현 담당자 보고 기준**)이다.
 >
