@@ -23,7 +23,7 @@
 | 항목 | 실측/구성 |
 | --- | --- |
 | 환경 | ROSA HCP Primary, Worker 3개 AZ 분산, Namespace `neuroplan` |
-| 대상 | Worker **2b**, `ip-10-20-47-36.ap-northeast-2.compute.internal` |
+| 대상 | **Worker 2b** (호스트명 및 사설 IP 비공개) |
 | 주입 | `oc adm drain --ignore-daemonsets --delete-emptydir-data --timeout=5m` |
 | 복구 | `oc adm uncordon` |
 | 보호 체계 | Backend 다중 Replica, PDB·Pod 분산 구성, Service Readiness/Endpoint |
@@ -58,7 +58,7 @@
 
 | 지표 | 10/16 전체 측정 구간 |
 | --- | ---: |
-| 측정 구간 | **19:15:53 ~ 19:18:53 KST** (초 단위 약 3분) |
+| 측정 구간 | **19:15:53.096600 ~ 19:18:53.608601 KST** (CSV 기록 기준, 약 3분) |
 | 로그인 | **1/1 성공** |
 | 상태 조회 | **170/170 성공** |
 | 저장 | **170/170 성공** |
@@ -68,13 +68,16 @@
 | 최종 결과 | **PASS**, 측정 구간 오류 0건 |
 
 - **로그인은 최초 1회**이고 조회·저장을 반복하는 세션 연속성 검증이다. **T0 이후 단계별 성공 건수를 별도로 집계한 값은 이 요약에 수록되지 않았다.** 전체 구간에 실패가 없다는 보고는 T0 이후 표본에도 실패가 없음을 의미하지만, T0 이후 요청 수를 전체 170건으로 표기하지 않는다.
-- 원본 CSV SHA-256 **축약 표기:** `44e407...736777`. **전체 64자리 해시는 원본 증적 보관처에서 확인**해야 하며 이 값만으로는 무결성 검증이 불가능하다.
+- **원본 CSV:** Infra VM `/root/k6_t1_20261016-191553.csv` (PR 리뷰어가 Infra VM 원본과 대조한 정보 기준).
+- **CSV SHA-256 (전체 64자리):** `44e407929bc2ce89c9e32b0a1df54cb6f95019e7fc792e37372488e032736777` (리뷰어 확인값; 본 문서 작성 시 원본 파일을 직접 재해시한 것은 아님).
+- **상세 분석 보고서:** Infra VM `/root/t1_k6_evidence_fixed_20261016-193720.txt`.
+- **정확한 관측 시각:** 2026-10-16 **19:15:53.096600 ~ 19:18:53.608601 KST**. T0 `19:16:57.049`는 DevOps VM에서 별도 기록한 Drain 명령 직전 시각이므로 구분한다.
 - 본 문서에서 p95/p99, 노드 재배치 완료 초 단위, k6 VU 수 등 원본 분석 보고에 없는 값은 추정해서 쓰지 않는다.
 
 ## 5. 판정, 증적 및 제한
 
 **판정: T1 PASS (인프라 재배치·스케줄링 복구 및 측정된 사용자 조회/저장 연속성).** Worker Drain 중 Pod 퇴거/다른 Worker 재배치가 이루어졌고 복구 후 서비스가 정상이며, k6 세션 시나리오의 요청 실패가 보고되지 않았다.
 
-**별도 보관 증적:** DevOps VM의 ROSA `oc` Drain/RS/Pod/Endpoint/Argo 로그, Grafana Cordon/Uncordon 및 Replica 관측 화면, Infra VM의 k6 원본 CSV·SHA-256·HTTP 코드/단계별 실패 상세 보고. 실제 CSV 파일명·전체 SHA-256/화면 파일 경로는 원본 보관 담당자 확인 대상이다. 원본 CSV와 계정/인증정보를 이 PR에 첨부하지 않는다.
+**별도 보관 증적:** DevOps VM의 ROSA `oc` Drain/RS/Pod/Endpoint/Argo 로그 및 Grafana Cordon/Uncordon·Replica 관측 화면, Infra VM의 k6 원본 CSV(`/root/k6_t1_20261016-191553.csv`)와 상세 분석 보고서(`/root/t1_k6_evidence_fixed_20261016-193720.txt`). 파일명·전체 SHA-256·정확한 CSV 관측 시각은 PR 리뷰어 확인값으로 기록했다. Grafana 화면의 실제 저장 경로는 별도 확인이 필요하다. 원본 CSV 및 계정·인증정보는 이 PR에 첨부하지 않는다.
 
 **추가 해석 주의:** Drain 명령 수행 중 모든 순간에 Ready Replica 2개가 유지됐다는 초 단위 전 구간 추적 자료는 이 문서에 없으며, 명확하게 기록된 것은 **Drain 이후 정상 2/2 및 k6 표본 실패 0건**이다. 이 결과를 대량 부하, 실제 Worker Crash, 전체 서비스 무장애 보증으로 일반화하지 않는다.
