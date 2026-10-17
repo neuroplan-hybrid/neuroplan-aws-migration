@@ -1,5 +1,7 @@
 # T2 Deployment Safety — 실패 Readiness 배포 차단 실측 결과 (2026-10-15)
 
+> **이전 실행 기록 / 보존:** 이 문서는 2026-10-15 T2 시험의 **당시 실측 결과(PASS)**를 보존합니다. **2026-10-16 재시연 결과인 [`t2_deployment_safety_1016.md`](./t2_deployment_safety_1016.md)를 현재 대표 T2 결과**로 사용합니다. 재시연은 Grafana 모니터링 증적을 보완하기 위한 것이며, 기존 시험 실패나 결과 무효화를 뜻하지 않습니다. 기존 실행 상세와 수치는 변경하지 않았습니다.
+
 > **판정: 실측 범위 내 PASS.** ROSA 신규 Backend ReplicaSet의 Readiness Probe 경로 오류를 GitOps로 주입했을 때, 기존 정상 ReplicaSet 2개가 Ready 상태를 유지했고 신규 Pod는 NotReady로 일반 서비스 트래픽에서 제외되었다. GitOps 원복 후 Argo CD Synced/Healthy와 Backend 2/2 복귀를 확인했다. k6 T0 이후 단계 검사 697건 중 실패 0건.
 >
 > **중요:** 이 테스트는 **잘못된 컨테이너 이미지/이미지 태그를 배포한 시험이 아니다.** 기존 이미지 태그는 유지하고 **신규 Pod의 Readiness Probe 경로만 의도적으로 잘못 설정한 RollingUpdate 안전성 시험**이다. T2 결과를 '불량 이미지 버전의 롤백'으로 표현하지 않는다.
